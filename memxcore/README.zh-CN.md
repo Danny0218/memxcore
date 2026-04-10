@@ -100,7 +100,6 @@ memxcore setup --dry-run  # 只預覽，不實際執行
   }
 }
 ```
-```
 
 ---
 

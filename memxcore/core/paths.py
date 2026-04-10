@@ -2,8 +2,15 @@
 
 import logging
 import os
+import warnings
 
 logger = logging.getLogger("memxcore")
+
+
+def _is_site_packages(path: str) -> bool:
+    """Check if a path is inside a Python site-packages directory."""
+    normalized = os.path.normpath(os.path.abspath(path))
+    return "site-packages" in normalized.split(os.sep)
 
 
 def resolve_workspace(fallback: str) -> str:
@@ -14,13 +21,21 @@ def resolve_workspace(fallback: str) -> str:
       2. MEMNEST_WORKSPACE / CLAWDMEMORY_WORKSPACE (legacy compat)
       3. *fallback* — typically computed from __file__ by the caller
     """
-    return (
+    ws = (
         os.environ.get("MEMXCORE_WORKSPACE")
         or os.environ.get("MEMX_WORKSPACE")
         or os.environ.get("MEMNEST_WORKSPACE")
         or os.environ.get("CLAWDMEMORY_WORKSPACE")
         or os.path.abspath(fallback)
     )
+    if _is_site_packages(ws):
+        warnings.warn(
+            f"memxcore: workspace resolves to site-packages ({ws}). "
+            "Memories will be lost on pip upgrade. "
+            "Set MEMXCORE_WORKSPACE=/path/to/your/project to fix this.",
+            stacklevel=2,
+        )
+    return ws
 
 
 def resolve_install_dir(workspace_path: str) -> str:

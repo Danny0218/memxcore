@@ -382,7 +382,7 @@ def _write_basic_fallback(manager: "object", content: str, distilled_at: str) ->
         front_matter["last_distilled"] = distilled_at
 
     chunk = summarize_recent(content)
-    new_body = body + f"\n\n## Distilled Chunk [{distilled_at}]\n\n{chunk}\n"
+    new_body = body + f"\n\n## [{distilled_at}]\n\n{chunk}\n"
 
     front_yaml = yaml.safe_dump(front_matter, allow_unicode=True).strip()
     rendered = f"---\n{front_yaml}\n---\n\n{new_body.lstrip()}"
@@ -436,7 +436,7 @@ def _run_compaction_job(
     Dual-write: each distilled fact is written to both archive/*.md and RAG vector store.
     """
     distilled_at = datetime.utcnow().isoformat()
-    strategy = (config.get("compaction") or {}).get("strategy", "basic")
+    strategy = (config.get("compaction") or {}).get("strategy", "llm")
     rag = getattr(manager, "rag", None)
 
     try:

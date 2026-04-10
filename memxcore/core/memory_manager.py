@@ -265,11 +265,17 @@ class MemoryManager:
     # Public API
     # -------------------------------------------------
 
-    def remember(self, text: str, level: Optional[int] = None) -> str:
+    def remember(
+        self,
+        text: str,
+        level: Optional[int] = None,
+        category: Optional[str] = None,
+    ) -> str:
         """
         Write a memory entry.
         - level is None / 0: append to RECENT.md (L0), awaiting compact distillation
         - level == 2: write directly to USER.md (L2), permanent storage, not cleared by compact
+        - category: optional hint for LLM distillation (e.g. "user_model", "domain")
         """
         if len(text.encode("utf-8")) > _MAX_REMEMBER_BYTES:
             raise ValueError(
@@ -291,7 +297,8 @@ class MemoryManager:
                 pass
             return "USER.md"
         else:
-            header = f"\n\n# [{timestamp}] Memory\n"
+            cat_tag = f" [category:{category}]" if category else ""
+            header = f"\n\n# [{timestamp}]{cat_tag} Memory\n"
             with self._write_lock:
                 with open(self.recent_path, "a", encoding="utf-8") as f:
                     f.write(header)

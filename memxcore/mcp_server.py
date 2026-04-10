@@ -98,7 +98,7 @@ def remember(
     that will not change. Normal memories go to RECENT.md → compacted to L1.
     """
     level = 2 if permanent else None
-    path = _get_manager(tenant_id).remember(text, level=level)
+    path = _get_manager(tenant_id).remember(text, level=level, category=category)
     return f"stored → {path}"
 
 

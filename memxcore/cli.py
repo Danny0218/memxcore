@@ -171,11 +171,11 @@ def cmd_doctor(tenant_id: Optional[str] = None) -> None:
     if not has_key:
         has_key = any(
             os.environ.get(k)
-            for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+            for k in ("ANTHROPIC_API_KEY",
                        "OPENAI_API_KEY", "GEMINI_API_KEY", "OLLAMA_API_BASE")
         )
     found_key_name = next(
-        (k for k in (api_key_env, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+        (k for k in (api_key_env, "ANTHROPIC_API_KEY",
                       "OPENAI_API_KEY", "GEMINI_API_KEY", "OLLAMA_API_BASE")
          if k and os.environ.get(k)), None
     )
