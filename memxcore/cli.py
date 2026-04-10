@@ -15,9 +15,22 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 import sys
+import warnings
 from typing import Optional
+
+# Suppress noisy third-party warnings during CLI usage
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("ST_LOAD_REPORT", "0")
+warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*")
+warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 
 def _get_manager(tenant_id: Optional[str] = None):
@@ -220,7 +233,14 @@ def cmd_doctor(tenant_id: Optional[str] = None) -> None:
     archive_dir = os.path.join(storage_dir, "archive")
 
     print(f"\n{'Storage':}")
-    _status(os.path.isdir(storage_dir), "Storage directory", storage_dir)
+    from memxcore.core.paths import _is_site_packages
+    if _is_site_packages(storage_dir):
+        _status(False, "Storage directory",
+                f"{storage_dir}\n"
+                "           ⚠ Storage is inside site-packages — memories will be lost on pip upgrade!\n"
+                "           Fix: export MEMXCORE_WORKSPACE=/path/to/your/project")
+    else:
+        _status(os.path.isdir(storage_dir), "Storage directory", storage_dir)
 
     if os.path.isdir(archive_dir):
         from memxcore.core.rag import _split_archive_sections

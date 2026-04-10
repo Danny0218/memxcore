@@ -27,12 +27,24 @@ Add to ~/.claude/settings.json or project .claude/settings.json:
 import logging
 import os
 import threading
+import warnings
 from typing import Any, Dict, List, Optional
+
+# Suppress noisy third-party warnings
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("ST_LOAD_REPORT", "0")
+warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*")
+warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s %(name)s: %(message)s",
 )
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 from mcp.server.fastmcp import FastMCP
 

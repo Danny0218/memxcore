@@ -84,7 +84,15 @@ class RAGIndex:
         model_name = rag_cfg.get("embedding_model", "paraphrase-multilingual-MiniLM-L12-v2")
 
         try:
-            ef = SentenceTransformerEmbeddingFunction(model_name=model_name)
+            # Suppress noisy model loading reports from safetensors/transformers
+            import io, sys
+            _orig_stderr = sys.stderr
+            sys.stderr = io.StringIO()
+            try:
+                ef = SentenceTransformerEmbeddingFunction(model_name=model_name)
+            finally:
+                sys.stderr = _orig_stderr
+
             client = chromadb.PersistentClient(path=self._chroma_dir)
             self._collection = client.get_or_create_collection(
                 name=self._collection_name,
