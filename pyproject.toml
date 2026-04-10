@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memxcore"
+version = "0.1.0"
+description = "Persistent memory system for AI coding assistants"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "MemXCore Contributors" },
+]
+keywords = ["ai", "memory", "mcp", "claude", "rag"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "litellm>=1.0.0",
+    "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+rag = [
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+]
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+]
+watch = [
+    "watchdog>=4.0.0",
+]
+bm25 = [
+    "rank-bm25>=0.2.2",
+]
+all = [
+    "memxcore[rag,server,watch,bm25]",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+memxcore = "memxcore.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Danny0218/memxcore"
+Repository = "https://github.com/Danny0218/memxcore"
+
+[tool.setuptools.packages.find]
+include = ["memxcore*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

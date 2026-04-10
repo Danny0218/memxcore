@@ -1,0 +1,34 @@
+compaction:
+  threshold_tokens: 2000   # Trigger compaction when RECENT.md exceeds this token count
+  strategy: llm            # 'llm' = LLM distillation (via litellm); 'basic' = truncate fallback
+  min_entries: 3           # Minimum entries in RECENT.md before compaction triggers
+  check_interval: 5        # Check token count every N remember() calls (reduces I/O)
+  stale_minutes: 10        # Auto-compact on search() if RECENT.md older than this
+
+llm:
+  model: anthropic/claude-sonnet     # litellm format: provider/model
+                                     # Examples: openai/gpt-4o, gemini/gemini-2.5-flash, ollama/llama3
+  api_key_env: ANTHROPIC_API_KEY     # Environment variable name for API key
+                                     # litellm also auto-reads OPENAI_API_KEY, GEMINI_API_KEY, etc.
+  # base_url:                        # Optional: custom API endpoint (gateway/proxy)
+
+rag:
+  embedding_model: paraphrase-multilingual-MiniLM-L12-v2  # multilingual; Chinese↔English cross-lingual
+  top_k: 10                           # Max results from semantic search
+  rrf_k: 60                           # RRF fusion constant (higher = more weight on top ranks)
+
+watch: false  # Auto-reindex archive/*.md on file change (resource-intensive, off by default)
+              # Use instead: memxcore reindex [category]
+
+memory:
+  categories:
+    - id: user_model
+      description: "Who the user is: role, expertise level, communication style, preferences, feedback on agent behaviour"
+    - id: domain
+      description: "Transferable domain or technical knowledge: protocols, standards, business logic, concepts — valid across projects"
+    - id: project_state
+      description: "Current working memory: active tasks, in-progress decisions, this week's focus — decays within weeks"
+    - id: episodic
+      description: "Time-bound events and historical decisions: what happened, what was decided, past incidents — has TTL"
+    - id: references
+      description: "Pointers to external resources: URLs, doc links, dashboard locations, ticket trackers, Slack channels"
