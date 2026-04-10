@@ -393,14 +393,14 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False) -> None:
         print(f"[{step}/{total_steps}] Claude Code")
 
         # MCP registration
-        mcp_cmd = ["claude", "mcp", "add", "-s", "user", "memxcore", "--",
+        mcp_cmd = ["claude", "mcp", "add", "-s", "user",
+                   "-e", f"MEMXCORE_WORKSPACE={workspace}",
+                   "memxcore", "--",
                    python_path, "-m", "memxcore.mcp_server"]
         if dry_run:
             print(f"  [dry-run] Would run: {' '.join(mcp_cmd)}")
         else:
-            env = os.environ.copy()
-            env["MEMXCORE_WORKSPACE"] = workspace
-            result = subprocess.run(mcp_cmd, capture_output=True, text=True, env=env)
+            result = subprocess.run(mcp_cmd, capture_output=True, text=True)
             if result.returncode == 0:
                 print("  ok  MCP server registered")
                 actions_taken.append("Claude Code: MCP")
@@ -485,15 +485,16 @@ def _write_claude_hooks(settings_path: str, workspace: str, python_path: str, dr
     import json
     import shutil
 
+    env_prefix = f"MEMXCORE_WORKSPACE={workspace}"
     hooks_config = {
         "UserPromptSubmit": [{"hooks": [{
             "type": "command",
-            "command": f"PYTHONPATH={workspace} {python_path} -m memxcore.hooks.user_prompt_submit",
+            "command": f"{env_prefix} {python_path} -m memxcore.hooks.user_prompt_submit",
             "timeout": 10,
         }]}],
         "Stop": [{"hooks": [
-            {"type": "command", "command": f"PYTHONPATH={workspace} {python_path} -m memxcore.hooks.auto_remember", "timeout": 30},
-            {"type": "command", "command": f"PYTHONPATH={workspace} {python_path} -m memxcore.cli compact 2>/dev/null || true"},
+            {"type": "command", "command": f"{env_prefix} {python_path} -m memxcore.hooks.auto_remember", "timeout": 30},
+            {"type": "command", "command": f"{env_prefix} {python_path} -m memxcore.cli compact 2>/dev/null || true"},
         ]}],
     }
 
