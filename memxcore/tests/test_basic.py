@@ -319,7 +319,7 @@ class TestConfig:
         cm_dir.mkdir()
         mm = MemoryManager(workspace_path=str(tmp_path))
         assert mm.config["compaction"]["threshold_tokens"] == 2000
-        assert mm.config["compaction"]["strategy"] == "basic"
+        assert mm.config["compaction"]["strategy"] == "llm"
 
     def test_tenant_config_override(self, tmp_path):
         cm_dir = tmp_path / "memxcore"

@@ -155,7 +155,14 @@ def cmd_doctor(tenant_id: Optional[str] = None) -> None:
 
     # config.yaml
     config_path = os.path.join(root_dir, "config.yaml")
-    _status(os.path.isfile(config_path), "config.yaml", config_path if os.path.isfile(config_path) else "Not found (using defaults)")
+    pkg_config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    if os.path.isfile(config_path):
+        _status(True, "config.yaml", config_path)
+    elif os.path.isfile(pkg_config_path):
+        _status(True, "config.yaml (bundled)", pkg_config_path)
+        config_path = pkg_config_path
+    else:
+        _status(False, "config.yaml", "Not found (using defaults)")
 
     # API key
     import yaml

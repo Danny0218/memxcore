@@ -701,7 +701,16 @@ Format: [{{"category": "<category>", "content": "<exact fact text>", "score": <0
             except OSError:
                 data = {}
         else:
-            data = {}
+            # Fallback to package-bundled config.yaml
+            pkg_config = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml")
+            if os.path.exists(pkg_config):
+                try:
+                    with open(pkg_config, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f) or {}
+                except OSError:
+                    data = {}
+            else:
+                data = {}
 
         # Tenant-level config override (if exists)
         if self.tenant_id and config_path is None:
@@ -718,6 +727,6 @@ Format: [{{"category": "<category>", "content": "<exact fact text>", "score": <0
 
         compaction = data.get("compaction") or {}
         compaction.setdefault("threshold_tokens", 2000)
-        compaction.setdefault("strategy", "basic")
+        compaction.setdefault("strategy", "llm")
         data["compaction"] = compaction
         return data
