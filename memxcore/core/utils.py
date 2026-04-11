@@ -257,7 +257,7 @@ def call_llm(prompt: str, config: Dict[str, Any], max_tokens: int = 1024) -> str
 
 def parse_llm_json(raw: str) -> Any:
     """Parse JSON returned by the LLM, tolerant of markdown code block wrappers."""
-    raw = re.sub(r'^```[a-z]*\s*', '', raw.strip(), flags=re.MULTILINE)
+    raw = re.sub(r'^```[a-zA-Z]*\s*', '', raw.strip(), flags=re.MULTILINE)
     raw = re.sub(r'\s*```$', '', raw.strip(), flags=re.MULTILINE)
     try:
         return json.loads(raw.strip())

@@ -135,7 +135,7 @@ class MemoryManager:
                     utils.ensure_file(p)
 
         # RAG index (available=False when chromadb not installed, graceful degradation)
-        rag_collection = f"memx_{tenant_id}" if tenant_id else "memxcore"
+        rag_collection = f"memxcore_{tenant_id}" if tenant_id else "memxcore"
         self.rag = RAGIndex(self.storage_dir, self.config, collection_name=rag_collection)
 
         # BM25 index (available=False when rank-bm25 not installed, graceful degradation)
@@ -155,7 +155,7 @@ class MemoryManager:
         self._write_lock = threading.Lock()
 
         # Startup auto-recovery: compact stale data from previous session that wasn't compacted
-        self._stale_checked = False
+        self._last_stale_check = 0.0  # epoch timestamp of last stale check
         self._compact_stale_on_startup()
 
         # Startup capability report
@@ -242,10 +242,18 @@ class MemoryManager:
         Defensive check: if RECENT.md hasn't been compacted for stale_minutes
         during search(), auto-trigger compact. Covers the case where MCP server
         has been running for a long time without restart.
+
+        Uses timestamp-based throttling so checks can re-fire periodically,
+        not just once per server lifetime.
         """
-        if self._stale_checked:
+        comp_cfg = self.config.get("compaction", {})
+        stale_minutes = int(comp_cfg.get("stale_minutes", 10))
+
+        # Throttle: only check once per stale_minutes interval
+        now = time.time()
+        if now - self._last_stale_check < stale_minutes * 60:
             return
-        self._stale_checked = True
+        self._last_stale_check = now
 
         try:
             if not os.path.isfile(self.recent_path):
@@ -253,9 +261,7 @@ class MemoryManager:
             stat = os.stat(self.recent_path)
             if stat.st_size == 0:
                 return
-            comp_cfg = self.config.get("compaction", {})
-            stale_minutes = int(comp_cfg.get("stale_minutes", 10))
-            age_minutes = (time.time() - stat.st_mtime) / 60.0
+            age_minutes = (now - stat.st_mtime) / 60.0
             if age_minutes >= stale_minutes:
                 self.compact(force=True)
         except Exception:

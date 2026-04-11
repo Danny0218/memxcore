@@ -22,10 +22,10 @@ def resolve_workspace(fallback: str) -> str:
       3. *fallback* — typically computed from __file__ by the caller
     """
     ws = (
-        os.environ.get("MEMXCORE_WORKSPACE")
-        or os.environ.get("MEMX_WORKSPACE")
-        or os.environ.get("MEMNEST_WORKSPACE")
-        or os.environ.get("CLAWDMEMORY_WORKSPACE")
+        (os.environ.get("MEMXCORE_WORKSPACE") or "").strip()
+        or (os.environ.get("MEMX_WORKSPACE") or "").strip()
+        or (os.environ.get("MEMNEST_WORKSPACE") or "").strip()
+        or (os.environ.get("CLAWDMEMORY_WORKSPACE") or "").strip()
         or os.path.abspath(fallback)
     )
     if _is_site_packages(ws):

@@ -50,8 +50,8 @@ Rules:
 4. Tags: provide TWO types of tags for each fact:
    - "tags": 1-3 topic keywords (e.g., "testing", "auth", "scheduler")
    - "entities": named entities mentioned in the fact — people, projects, tools, ticket IDs,
-     service names, product names. Use exact names as they appear (e.g., "Alice", "tronscan",
-     "TRNSCN-3078", "Redis", "memxcore"). Omit if no specific entity is mentioned.
+     service names, product names. Use exact names as they appear (e.g., "Alice", "backend-api",
+     "PROJ-3078", "Redis", "memxcore"). Omit if no specific entity is mentioned.
 5. Return ONLY a valid JSON array. No explanation, no markdown fences.
 6. CRITICAL: User preferences, communication style, corrections, and feedback on agent behaviour
    ALWAYS go to user_model — never to episodic, even if phrased as past events.
@@ -327,7 +327,7 @@ def _write_to_category_archive(
             "topic": category,
             "tags": tags,
             "last_distilled": distilled_at,
-            "confidence_level": 4,
+            "confidence_level": 1,
         }
         body = ""
     else:
@@ -500,22 +500,23 @@ def _run_compaction_job(
     except Exception:
         success = False
 
-    if success:
-        # Distillation succeeded: delete snapshot backup
-        try:
-            os.remove(snapshot_path)
-        except OSError:
-            pass
-    else:
+    if not success:
         # Distillation failed: restore snapshot to beginning of RECENT.md to prevent data loss
         try:
-            with open(manager.recent_path, "r", encoding="utf-8") as f:
-                existing = f.read()
+            existing = ""
+            if os.path.isfile(manager.recent_path):
+                with open(manager.recent_path, "r", encoding="utf-8") as f:
+                    existing = f.read()
             with open(manager.recent_path, "w", encoding="utf-8") as f:
                 f.write(snapshot + existing)
-            os.remove(snapshot_path)
         except OSError:
             pass
+
+    # Always delete snapshot file to prevent orphaned duplicates on next startup
+    try:
+        os.remove(snapshot_path)
+    except OSError:
+        pass
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -545,8 +546,15 @@ def maybe_compact_recent(manager: "object", force: bool = False) -> None:
     check_interval = int(comp_cfg.get("check_interval", 5))
 
     # ── 1. Write counter: reduce I/O frequency ─────────────────────────
-    manager._write_counter = getattr(manager, "_write_counter", 0) + 1
-    if not force and manager._write_counter % check_interval != 0:
+    write_lock = getattr(manager, "_write_lock", None)
+    if write_lock:
+        with write_lock:
+            manager._write_counter = getattr(manager, "_write_counter", 0) + 1
+            counter = manager._write_counter
+    else:
+        manager._write_counter = getattr(manager, "_write_counter", 0) + 1
+        counter = manager._write_counter
+    if not force and counter % check_interval != 0:
         return
 
     # ── 2. Read file ──────────────────────────────────────────────────
@@ -594,5 +602,5 @@ def maybe_compact_recent(manager: "object", force: bool = False) -> None:
         finally:
             lock.release()
 
-    thread_name = f"memx-compact-{tenant_id or 'default'}"
+    thread_name = f"memxcore-compact-{tenant_id or 'default'}"
     threading.Thread(target=_job, daemon=True, name=thread_name).start()

@@ -32,7 +32,7 @@ def run_benchmark(
 
     Args:
         dataset_path: JSON file containing memories + queries
-        workspace_path: memx workspace root directory
+        workspace_path: memxcore workspace root directory
         ks: list of K values to compute, default [1, 3, 5, 10]
         modes: list of search modes, default ["hybrid", "rag", "bm25", "keyword"]
         verbose: whether to print results for each query
@@ -60,7 +60,7 @@ def run_benchmark(
     queries = dataset["queries"]
 
     # ── 2. Create an isolated test environment ────────────────────────
-    tmpdir = tempfile.mkdtemp(prefix="memx_bench_")
+    tmpdir = tempfile.mkdtemp(prefix="memxcore_bench_")
     try:
         results = _run_in_sandbox(
             tmpdir, memories, queries, ks, modes, verbose, workspace_path

@@ -1,5 +1,5 @@
 """
-memx HTTP server
+memxcore HTTP server
 
 Supports multi-tenant: each endpoint accepts an optional tenant_id query parameter.
 Omitting tenant_id behaves identically to single-tenant mode.
@@ -85,7 +85,7 @@ def rebuild_rag(tenant_id: Optional[str] = None) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="memx server")
+    parser = argparse.ArgumentParser(description="memxcore server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()

@@ -1,5 +1,5 @@
 """
-memx test suite.
+memxcore test suite.
 
 Tests use temporary directories to avoid polluting real storage.
 LLM-dependent features (distillation) are tested with strategy=basic
@@ -32,7 +32,7 @@ from memxcore.core.utils import parse_front_matter, parse_llm_json, extract_simp
 
 @pytest.fixture
 def workspace(tmp_path) -> str:
-    """Create a temporary workspace with minimal memx config (basic strategy)."""
+    """Create a temporary workspace with minimal memxcore config (basic strategy)."""
     cm_dir = tmp_path / "memxcore"
     cm_dir.mkdir()
     config = {

@@ -173,7 +173,6 @@ def reindex(
     category: reindex only this category (e.g. "project_state").
               Omit to reindex all archive files.
     """
-    import os
     from memxcore.core.utils import sanitize_category
     mgr = _get_manager(tenant_id)
     if category:

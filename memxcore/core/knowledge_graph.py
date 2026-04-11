@@ -10,11 +10,14 @@ Design principles:
 - No external service dependencies, pure Python + sqlite3
 """
 
+import logging
 import os
 import sqlite3
 import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("memxcore.kg")
 
 
 _SCHEMA = """
@@ -55,7 +58,9 @@ class KnowledgeGraph:
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         conn = sqlite3.connect(self._db_path)
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
+            result = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+            if result and result[0].upper() != "WAL":
+                logger.warning("SQLite WAL mode not available, using %s", result[0])
             conn.executescript(_SCHEMA)
             conn.commit()
         finally:
