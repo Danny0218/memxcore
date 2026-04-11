@@ -52,8 +52,7 @@ memxcore doctor
 **LLM API key** (any provider supported via [litellm](https://docs.litellm.ai/)):
 ```bash
 # Pick one:
-export ANTHROPIC_API_KEY=sk-ant-...     # Anthropic (direct API)
-export ANTHROPIC_AUTH_TOKEN=xxx         # Anthropic (gateway/proxy, with ANTHROPIC_BASE_URL)
+export ANTHROPIC_API_KEY=sk-ant-...     # Anthropic
 export OPENAI_API_KEY=sk-...            # OpenAI
 export GEMINI_API_KEY=...               # Google Gemini
 # Or use Ollama for fully local/offline: no key needed, just set model in config.yaml

@@ -53,8 +53,7 @@ memxcore doctor
 **LLM API Key**（透過 [litellm](https://docs.litellm.ai/) 支援所有主流 provider）：
 ```bash
 # 任選一個：
-export ANTHROPIC_API_KEY=sk-ant-...     # Anthropic（直連 API）
-export ANTHROPIC_AUTH_TOKEN=xxx         # Anthropic（Gateway/代理，搭配 ANTHROPIC_BASE_URL）
+export ANTHROPIC_API_KEY=sk-ant-...     # Anthropic
 export OPENAI_API_KEY=sk-...            # OpenAI
 export GEMINI_API_KEY=...               # Google Gemini
 # 或使用 Ollama 完全本地運行，不需 key，只需在 config.yaml 設定 model
