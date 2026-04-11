@@ -38,7 +38,8 @@ pip install 'memxcore[rag]'   # + semantic search (recommended)
 pip install 'memxcore[all]'   # everything
 
 # Or from source:
-pip install -r memxcore/requirements.txt
+git clone https://github.com/Danny0218/memxcore.git
+cd memxcore && pip install '.[rag]'
 ```
 
 **Check your setup:**
@@ -136,9 +137,12 @@ memory:
 ### One-command setup (recommended)
 
 ```bash
-memxcore setup            # auto-detects tools and configures everything
-memxcore setup --dry-run  # preview without making changes
+memxcore setup                              # interactive: asks where to store memories
+memxcore setup --workspace ~/my-project     # non-interactive
+memxcore setup --dry-run                    # preview without making changes
 ```
+
+Setup will ask you to choose a workspace directory for storing memories (default: `~/.memxcore`). This path is written into all tool configurations.
 
 Automatically detects and configures:
 

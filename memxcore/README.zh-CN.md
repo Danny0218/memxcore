@@ -39,8 +39,7 @@ pip install 'memxcore[all]'   # 全部功能
 
 # 或從原始碼安裝：
 git clone https://github.com/Danny0218/memxcore.git
-cd memxcore
-pip install -r memxcore/requirements.txt
+cd memxcore && pip install '.[rag]'
 ```
 
 **檢查安裝：**

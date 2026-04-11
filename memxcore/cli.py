@@ -375,21 +375,48 @@ def _check_import(module: str, package: str, fix: str, required: bool) -> bool:
         return False
 
 
-def cmd_setup(dry_run: bool = False, skip_hooks: bool = False) -> None:
+def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_override: Optional[str] = None) -> None:
     """One-command setup: detect installed tools and configure MCP + hooks + rules."""
     import json
     import shutil
     import subprocess
 
     python_path = sys.executable
-    from memxcore.core.paths import resolve_workspace
-    workspace = resolve_workspace(os.path.join(os.path.dirname(__file__), ".."))
+    from memxcore.core.paths import _is_site_packages
     memx_claude_md = os.path.join(os.path.dirname(__file__), "CLAUDE.md")
 
-    print("MemXCore Setup")
-    print(f"{'=' * 50}")
-    print(f"  Python:    {python_path}")
-    print(f"  Workspace: {workspace}")
+    # ── Resolve workspace (must be explicit) ─────────────────────────
+    workspace = (
+        workspace_override
+        or os.environ.get("MEMXCORE_WORKSPACE", "").strip()
+        or ""
+    )
+    if workspace and not _is_site_packages(workspace):
+        workspace = os.path.abspath(os.path.expanduser(workspace))
+        print("MemXCore Setup")
+        print(f"{'=' * 50}")
+        print(f"  Python:    {python_path}")
+        print(f"  Workspace: {workspace}")
+    else:
+        default_ws = os.path.expanduser("~/.memxcore")
+        print("MemXCore Setup")
+        print(f"{'=' * 50}")
+        print(f"  Python:    {python_path}")
+        print()
+        print("  Where should memxcore store memories?")
+        print(f"  Press Enter for default: {default_ws}")
+        if dry_run:
+            workspace = default_ws
+            print(f"  (dry-run: using default)")
+        else:
+            try:
+                user_input = input("  Workspace path: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Aborted.")
+                return
+            workspace = user_input if user_input else default_ws
+        workspace = os.path.abspath(os.path.expanduser(workspace))
+        print(f"  Workspace: {workspace}")
 
     # ── Detect installed tools ────────────────────────────────────────
     tools_found = []
@@ -764,6 +791,7 @@ def main() -> None:
     p_setup = sub.add_parser("setup", help="Auto-detect tools and configure MCP + hooks + rules")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
     p_setup.add_argument("--skip-hooks", action="store_true", help="Skip Claude Code hook configuration")
+    p_setup.add_argument("--workspace", default=None, help="Workspace path (where memories are stored)")
 
     # config
     p_config = sub.add_parser("config", help="View or change configuration")
@@ -786,6 +814,7 @@ def main() -> None:
         cmd_setup(
             dry_run=getattr(args, "dry_run", False),
             skip_hooks=getattr(args, "skip_hooks", False),
+            workspace_override=getattr(args, "workspace", None),
         )
     elif args.command == "mine":
         cmd_mine(args.path, tenant_id=args.tenant)
