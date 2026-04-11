@@ -6,10 +6,12 @@ compaction:
   stale_minutes: 10        # Auto-compact on search() if RECENT.md older than this
 
 llm:
-  model: anthropic/claude-sonnet     # litellm format: provider/model
-                                     # Examples: openai/gpt-4o, gemini/gemini-2.5-flash, ollama/llama3
-  api_key_env: ANTHROPIC_API_KEY     # Environment variable name for API key
-                                     # litellm also auto-reads OPENAI_API_KEY, GEMINI_API_KEY, etc.
+  # model: anthropic/claude-sonnet   # ← uncomment & change to your provider
+  #   provider/model examples (litellm format):
+  #   anthropic/claude-sonnet, openai/gpt-4o, gemini/gemini-2.5-flash, ollama/llama3
+  # api_key_env: ANTHROPIC_API_KEY   # ← env var name for your provider's API key
+  #   litellm auto-detects: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
+  #   Ollama needs no key — just set model: ollama/llama3
   # base_url:                        # Optional: custom API endpoint (gateway/proxy)
 
 rag:

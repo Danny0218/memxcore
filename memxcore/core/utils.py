@@ -63,6 +63,68 @@ def write_json(path: str, data: Dict[str, Any]) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def write_config_key(config_path: str, key: str, value: str) -> Dict[str, Any]:
+    """
+    Set a dot-notation key in a YAML config file.
+    Creates the file if it doesn't exist. Returns the updated config dict.
+    """
+    data: Dict[str, Any] = {}
+    if os.path.isfile(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            data = {}
+
+    # Navigate dot notation: "llm.model" -> data["llm"]["model"]
+    parts = key.split(".")
+    target = data
+    for part in parts[:-1]:
+        if part not in target or not isinstance(target[part], dict):
+            target[part] = {}
+        target = target[part]
+
+    # Auto-convert numeric/bool strings
+    if value.lower() in ("true", "false"):
+        target[parts[-1]] = value.lower() == "true"
+    elif value.isdigit():
+        target[parts[-1]] = int(value)
+    else:
+        try:
+            target[parts[-1]] = float(value)
+        except ValueError:
+            target[parts[-1]] = value
+
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False)
+    return data
+
+
+def load_config(workspace_path: str, pkg_dir: str) -> Dict[str, Any]:
+    """
+    Load config from workspace config.yaml, falling back to package bundled one.
+    Returns the merged config dict.
+    """
+    from .paths import resolve_install_dir
+    root_dir = resolve_install_dir(workspace_path)
+    ws_config = os.path.join(root_dir, "config.yaml")
+    if os.path.isfile(ws_config):
+        try:
+            with open(ws_config, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            pass
+    pkg_config = os.path.join(pkg_dir, "config.yaml")
+    if os.path.isfile(pkg_config):
+        try:
+            with open(pkg_config, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            pass
+    return {}
+
+
 def parse_front_matter(raw: str) -> Tuple[Dict[str, Any], str]:
     """
     Parse YAML front matter from a Markdown file.
@@ -107,6 +169,19 @@ def extract_simple_summary(body: str, max_len: int = 160) -> str:
     return ""
 
 
+def _detect_default_model() -> str:
+    """Pick a default model based on which API key is available."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic/claude-haiku-4-5-20251001"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai/gpt-4o-mini"
+    if os.environ.get("GEMINI_API_KEY"):
+        return "gemini/gemini-2.0-flash"
+    if os.environ.get("OLLAMA_API_BASE"):
+        return "ollama/llama3"
+    return "anthropic/claude-haiku-4-5-20251001"
+
+
 def call_llm(prompt: str, config: Dict[str, Any], max_tokens: int = 1024) -> str:
     """
     Shared LLM call utility via litellm (supports Anthropic, OpenAI, Gemini, Ollama, etc.).
@@ -115,11 +190,11 @@ def call_llm(prompt: str, config: Dict[str, Any], max_tokens: int = 1024) -> str
 
     Config example (config.yaml):
       llm:
-        model: anthropic/claude-sonnet       # litellm model format: provider/model
-        api_key_env: ANTHROPIC_API_KEY       # env var name to read API key from
+        model: openai/gpt-4o              # litellm format: provider/model
+        api_key_env: OPENAI_API_KEY        # env var name to read API key from
     """
     llm_cfg = config.get("llm", {})
-    model = llm_cfg.get("model", "anthropic/claude-haiku-4-5-20251001")
+    model = llm_cfg.get("model") or _detect_default_model()
 
     # Resolve API key from configured env var
     api_key_env = llm_cfg.get("api_key_env", "")

@@ -102,10 +102,11 @@ compaction:
   stale_minutes: 10         # Auto-compact on search() if RECENT.md older than this
 
 llm:
-  model: anthropic/claude-sonnet  # litellm format: provider/model
-                                  # Examples: openai/gpt-4o, gemini/gemini-2.5-flash, ollama/llama3
-  api_key_env: ANTHROPIC_API_KEY  # Env var name (litellm also auto-reads OPENAI_API_KEY, etc.)
-  # base_url:                     # Optional: custom API endpoint (gateway/proxy)
+  # model: anthropic/claude-sonnet   # uncomment & change to your provider
+  #   Examples: openai/gpt-4o, gemini/gemini-2.5-flash, ollama/llama3
+  #   If omitted, auto-detects from available API key
+  # api_key_env: OPENAI_API_KEY     # env var name (auto-detects if omitted)
+  # base_url:                       # Optional: custom API endpoint (gateway/proxy)
 
 rag:
   embedding_model: all-MiniLM-L6-v2  # sentence-transformers model (80MB, CPU-friendly)
@@ -177,6 +178,7 @@ If you prefer manual configuration, the MCP server config for any tool is:
 | `search` | `query`, `max_results?`, `tenant_id?` | Retrieve memories (semantic + keyword) |
 | `compact` | `force?`, `tenant_id?` | Distill RECENT.md into categorized archives |
 | `reindex` | `category?`, `tenant_id?` | Rebuild RAG index after manual edits |
+| `set_config` | `key`, `value`, `tenant_id?` | Set a config value (dot notation, e.g. `llm.model`) |
 
 **Categories for `remember`:**
 `user_model` / `domain` / `project_state` / `episodic` / `references`
@@ -208,6 +210,9 @@ Tenants can also have their own `config.yaml` override at `tenants/<tenant_id>/c
 memxcore setup                        # auto-detect tools, configure everything
 memxcore setup --dry-run              # preview without changes
 memxcore doctor                       # check system readiness
+memxcore config show                  # show current config
+memxcore config set llm.model openai/gpt-4o   # change LLM provider
+memxcore config path                  # show config file location
 memxcore reindex                      # rebuild RAG index
 memxcore compact                      # force distillation
 memxcore search "query"               # search memories (debug)

@@ -212,7 +212,7 @@ class MemoryManager:
         else:
             degraded.append("BM25 disabled (rank-bm25 not installed)")
 
-        llm_cfg = self.config.get("llm", {})
+        llm_cfg = self.config.get("llm") or {}
         api_key_env = llm_cfg.get("api_key_env", "")
         has_key = bool(api_key_env and os.environ.get(api_key_env))
         if not has_key:

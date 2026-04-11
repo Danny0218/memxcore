@@ -110,6 +110,7 @@ memxcore setup --dry-run  # 只預覽，不實際執行
 | `search` | `query`, `max_results?`, `tenant_id?` | 語義 + 關鍵字搜索 |
 | `compact` | `force?`, `tenant_id?` | 蒸餾 RECENT.md 到分類歸檔 |
 | `reindex` | `category?`, `tenant_id?` | 手動編輯 archive 後重建索引 |
+| `set_config` | `key`, `value`, `tenant_id?` | 設定配置值（dot notation，如 `llm.model`） |
 
 **記憶類別：** `user_model` / `domain` / `project_state` / `episodic` / `references`
 
@@ -133,6 +134,9 @@ memxcore --tenant alice search "preferences"
 memxcore setup                        # 自動偵測工具，一鍵配置
 memxcore setup --dry-run              # 預覽不執行
 memxcore doctor                       # 檢查系統狀態
+memxcore config show                  # 顯示目前配置
+memxcore config set llm.model openai/gpt-4o   # 切換 LLM provider
+memxcore config path                  # 顯示配置檔路徑
 memxcore reindex                      # 重建 RAG 索引
 memxcore compact                      # 強制蒸餾
 memxcore search "query"               # 搜索（除錯用）

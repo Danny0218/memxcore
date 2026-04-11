@@ -191,6 +191,34 @@ def reindex(
 
 
 @mcp.tool()
+def set_config(
+    key: str,
+    value: str,
+    tenant_id: Optional[str] = None,
+) -> str:
+    """
+    Set a memxcore config value. Uses dot notation for nested keys.
+
+    Examples:
+      set_config("llm.model", "openai/gpt-4o")
+      set_config("llm.model", "gemini/gemini-2.5-flash")
+      set_config("llm.api_key_env", "OPENAI_API_KEY")
+      set_config("compaction.strategy", "llm")
+      set_config("rag.top_k", "20")
+    """
+    from memxcore.core.utils import write_config_key
+    from memxcore.core.paths import resolve_install_dir
+    ws = _default_workspace()
+    root_dir = resolve_install_dir(ws)
+    config_path = os.path.join(root_dir, "config.yaml")
+    write_config_key(config_path, key, value)
+    # Reload manager config so changes take effect immediately
+    mgr = _get_manager(tenant_id)
+    mgr.config = mgr._load_config()
+    return f"Set {key} = {value!r} (written to {config_path})"
+
+
+@mcp.tool()
 def kg_add(
     subject: str,
     predicate: str,

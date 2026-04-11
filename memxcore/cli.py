@@ -149,6 +149,56 @@ def cmd_mine(path: str, tenant_id: Optional[str] = None) -> None:
         print(f"  {r['file']}: {status}")
 
 
+def cmd_config(args, tenant_id: Optional[str] = None) -> None:
+    """View or change configuration."""
+    import yaml as _yaml
+    from memxcore.core.paths import resolve_workspace, resolve_install_dir
+    from memxcore.core.utils import write_config_key
+
+    workspace = resolve_workspace(os.path.join(os.path.dirname(__file__), ".."))
+    root_dir = resolve_install_dir(workspace)
+    ws_config_path = os.path.join(root_dir, "config.yaml")
+    pkg_config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+
+    action = getattr(args, "config_action", None)
+
+    if action == "path":
+        if os.path.isfile(ws_config_path):
+            print(ws_config_path)
+        else:
+            print(f"{ws_config_path}  (not created yet, using bundled defaults)")
+        return
+
+    if action == "set":
+        key = args.key
+        value = args.value
+        updated = write_config_key(ws_config_path, key, value)
+        print(f"Set {key} = {value!r}")
+        print(f"Written to {ws_config_path}")
+        return
+
+    # Default: show
+    config = {}
+    source = "defaults"
+    if os.path.isfile(ws_config_path):
+        try:
+            with open(ws_config_path, "r", encoding="utf-8") as f:
+                config = _yaml.safe_load(f) or {}
+            source = ws_config_path
+        except Exception:
+            pass
+    elif os.path.isfile(pkg_config_path):
+        try:
+            with open(pkg_config_path, "r", encoding="utf-8") as f:
+                config = _yaml.safe_load(f) or {}
+            source = f"{pkg_config_path} (bundled)"
+        except Exception:
+            pass
+
+    print(f"# Source: {source}\n")
+    print(_yaml.safe_dump(config, allow_unicode=True, default_flow_style=False).strip())
+
+
 def cmd_doctor(tenant_id: Optional[str] = None) -> None:
     """Check system readiness: deps, config, storage, search capabilities."""
     import platform
@@ -186,7 +236,7 @@ def cmd_doctor(tenant_id: Optional[str] = None) -> None:
                 config = yaml.safe_load(f) or {}
         except Exception:
             pass
-    api_key_env = config.get("llm", {}).get("api_key_env", "")
+    api_key_env = (config.get("llm") or {}).get("api_key_env", "")
     has_key = bool(api_key_env and os.environ.get(api_key_env))
     if not has_key:
         has_key = any(
@@ -686,13 +736,24 @@ def main() -> None:
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
     p_setup.add_argument("--skip-hooks", action="store_true", help="Skip Claude Code hook configuration")
 
+    # config
+    p_config = sub.add_parser("config", help="View or change configuration")
+    config_sub = p_config.add_subparsers(dest="config_action")
+    config_sub.add_parser("show", help="Show current config")
+    config_sub.add_parser("path", help="Show config file path")
+    p_config_set = config_sub.add_parser("set", help="Set a config value (dot notation)")
+    p_config_set.add_argument("key", help="Config key (e.g. llm.model)")
+    p_config_set.add_argument("value", help="Value to set")
+
     # mine
     p_mine = sub.add_parser("mine", help="Import conversations/files into memxcore")
     p_mine.add_argument("path", help="File or directory to import (.jsonl, .json, .md, .txt)")
 
     args = parser.parse_args()
 
-    if args.command == "setup":
+    if args.command == "config":
+        cmd_config(args, tenant_id=args.tenant)
+    elif args.command == "setup":
         cmd_setup(
             dry_run=getattr(args, "dry_run", False),
             skip_hooks=getattr(args, "skip_hooks", False),
