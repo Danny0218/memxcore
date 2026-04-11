@@ -482,8 +482,8 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False) -> None:
         if not dry_run:
             actions_taken.append("Cursor: MCP")
 
-        rules_path = os.path.join(cursor_dir, "rules", "memxcore.md")
-        _copy_rules(memx_claude_md, rules_path, "~/.cursor/rules/memxcore.md", dry_run)
+        rules_path = os.path.join(cursor_dir, "rules", "memxcore.mdc")
+        _copy_cursor_rules(memx_claude_md, rules_path, "~/.cursor/rules/memxcore.mdc", dry_run)
         if not dry_run:
             actions_taken.append("Cursor: rules")
 
@@ -693,6 +693,35 @@ def _copy_rules(src_path: str, dst_path: str, display_path: str, dry_run: bool) 
     import shutil
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
     shutil.copy2(src_path, dst_path)
+    print(f"  ok  Rules copied to {display_path}")
+
+
+def _copy_cursor_rules(src_path: str, dst_path: str, display_path: str, dry_run: bool) -> None:
+    """Copy agent rules as Cursor .mdc format with frontmatter."""
+    if not os.path.isfile(src_path):
+        print(f"  !!  Source rules not found: {src_path}")
+        return
+
+    if os.path.isfile(dst_path):
+        print(f"  --  Rules already exist at {display_path}")
+        return
+    if dry_run:
+        print(f"  [dry-run] Would copy rules to {display_path}")
+        return
+
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    with open(src_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    mdc_content = (
+        "---\n"
+        "description: MemXCore persistent memory system instructions\n"
+        "alwaysApply: true\n"
+        "---\n\n"
+        + content
+    )
+    with open(dst_path, "w", encoding="utf-8") as f:
+        f.write(mdc_content)
     print(f"  ok  Rules copied to {display_path}")
 
 

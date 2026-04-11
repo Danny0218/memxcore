@@ -145,7 +145,7 @@ Automatically detects and configures:
 | Tool | What it does |
 |------|-------------|
 | **Claude Code** | Registers MCP server, installs hooks (auto-remember + auto-compact), appends agent rules to `~/.claude/CLAUDE.md` |
-| **Cursor** | Writes MCP config to `~/.cursor/mcp.json`, copies rules to `~/.cursor/rules/memxcore.md` |
+| **Cursor** | Writes MCP config to `~/.cursor/mcp.json`, copies rules to `~/.cursor/rules/memxcore.mdc` |
 | **Windsurf** | Writes MCP config to `~/.codeium/windsurf/mcp_config.json` |
 | **Codex (OpenAI)** | Writes MCP config to `~/.codex/config.toml` |
 | **Gemini CLI** | Writes MCP config to `~/.gemini/settings.json` |

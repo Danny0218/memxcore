@@ -75,7 +75,7 @@ memxcore setup --dry-run  # 只預覽，不實際執行
 | 工具 | 自動配置內容 |
 |------|-------------|
 | **Claude Code** | MCP server 註冊 + hooks（auto-remember + auto-compact）+ agent 規則 |
-| **Cursor** | MCP config (`~/.cursor/mcp.json`) + 規則 (`~/.cursor/rules/memxcore.md`) |
+| **Cursor** | MCP config (`~/.cursor/mcp.json`) + 規則 (`~/.cursor/rules/memxcore.mdc`) |
 | **Windsurf** | MCP config (`~/.codeium/windsurf/mcp_config.json`) |
 | **Codex (OpenAI)** | MCP config (`~/.codex/config.toml`) |
 | **Gemini CLI** | MCP config (`~/.gemini/settings.json`) |
