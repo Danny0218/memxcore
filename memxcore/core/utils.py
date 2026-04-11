@@ -193,7 +193,7 @@ def call_llm(prompt: str, config: Dict[str, Any], max_tokens: int = 1024) -> str
         model: openai/gpt-4o              # litellm format: provider/model
         api_key_env: OPENAI_API_KEY        # env var name to read API key from
     """
-    llm_cfg = config.get("llm", {})
+    llm_cfg = config.get("llm") or {}
     model = llm_cfg.get("model") or _detect_default_model()
 
     # Resolve API key from configured env var

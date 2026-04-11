@@ -188,7 +188,7 @@ def main():
         _empty()
         return
 
-    user_prompt = input_data.get("user_prompt", "").strip()
+    user_prompt = (input_data.get("prompt") or input_data.get("user_prompt") or "").strip()
     if len(user_prompt) < MIN_QUERY_LENGTH:
         _empty()
         return
