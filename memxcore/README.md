@@ -305,7 +305,9 @@ pip install 'memxcore[rag]'
 
 **LLM distillation falling back to basic**
 ```bash
-echo $ANTHROPIC_API_KEY   # must be set
+memxcore doctor   # check which API key is detected
+# Any one of these will work (via litellm):
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or Ollama (no key needed)
 # Without API key, memories go to archive/general.md (uncategorized)
 ```
 
