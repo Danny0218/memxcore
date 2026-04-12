@@ -157,7 +157,15 @@ def cmd_timeline(days: int = 7, after: Optional[str] = None, before: Optional[st
                     continue
                 _before_padded = before if "T" in before else before + "T23:59:59.999999"
                 if ts >= after and ts <= _before_padded:
-                    preview = body.split("\n")[0].strip()
+                    # Extract actual content: skip header remnants like "[category:X] Memory"
+                    content_lines = [
+                        l.strip() for l in body.split("\n")
+                        if l.strip()
+                        and not l.strip().startswith("[category:")
+                        and l.strip() != "Memory"
+                        and not l.strip().startswith("Memory [category=")
+                    ]
+                    preview = content_lines[0] if content_lines else "(empty)"
                     if len(preview) > 200:
                         preview = preview[:200] + "..."
                     entries.append((ts, "[journal]", preview))

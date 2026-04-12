@@ -257,6 +257,11 @@ class MemoryManager:
             for msg in degraded:
                 logger.warning("memxcore: %s", msg)
 
+    def close(self) -> None:
+        """Release resources (ChromaDB client, file watcher, KG connection)."""
+        self.watcher.stop() if hasattr(self.watcher, 'stop') else None
+        self.rag.close()
+
     def _maybe_compact_stale(self) -> None:
         """
         Defensive check: if RECENT.md hasn't been compacted for stale_minutes
@@ -455,9 +460,19 @@ class MemoryManager:
                 # Write to journal FIRST — only clear RECENT.md if journal write succeeds.
                 # Use append_with_lock directly (not _append_to_journal which swallows errors)
                 # so we can detect failure and keep RECENT.md intact.
+                import hashlib
                 today = datetime.utcnow().strftime("%Y-%m-%d")
                 journal_path = os.path.join(self.journal_dir, f"{today}.md")
-                header = f"\n\n# === Archived at {datetime.utcnow().isoformat()} ===\n\n"
+                content_hash = hashlib.md5(content.strip().encode("utf-8")).hexdigest()
+                # Dedup: skip journal write if identical content already archived
+                if os.path.isfile(journal_path):
+                    with open(journal_path, "r", encoding="utf-8") as jf:
+                        if content_hash in jf.read():
+                            # Already archived — just clear RECENT.md
+                            with open(self.recent_path, "w", encoding="utf-8") as f:
+                                f.write("")
+                            return "flushed"
+                header = f"\n\n# === Archived at {datetime.utcnow().isoformat()} [hash:{content_hash}] ===\n\n"
                 utils.append_with_lock(journal_path, header + content)
                 # Journal write succeeded — safe to clear RECENT.md
                 with open(self.recent_path, "w", encoding="utf-8") as f:
@@ -733,14 +748,18 @@ Format: [{{"category": "<category>", "content": "<exact fact text>", "score": <0
                 )
 
         if index_matches:
-            # Index narrowed candidates — but always include USER.md
+            # Index narrowed candidates — but always include USER.md + RECENT.md
             search_targets = []
             if os.path.isfile(self.user_path):
                 search_targets.append(self.user_path)
+            if os.path.isfile(self.recent_path):
+                search_targets.append(self.recent_path)
             search_targets.extend(index_matches)
         else:
-            # No index matches — full scan of USER.md + all archive files
+            # No index matches — full scan of USER.md + RECENT.md + all archive files
             search_targets = [self.user_path] if os.path.isfile(self.user_path) else []
+            if os.path.isfile(self.recent_path):
+                search_targets.append(self.recent_path)
             search_targets += [
                 os.path.join(self.archive_dir, name)
                 for name in os.listdir(self.archive_dir)

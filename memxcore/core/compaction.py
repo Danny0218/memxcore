@@ -1,4 +1,5 @@
 import fcntl
+import hashlib
 import logging
 import os
 import re
@@ -20,6 +21,7 @@ def _append_to_journal(manager: "object", content: str, snapshot_time: Optional[
     """
     Append raw RECENT.md content to a daily journal file for permanent archival.
     Uses utils.append_with_lock() for cross-process safety.
+    Deduplicates: skips if identical content was already archived today.
     Failures are logged but never block compaction.
 
     snapshot_time: ISO date string (YYYY-MM-DD) for the journal filename.
@@ -32,8 +34,15 @@ def _append_to_journal(manager: "object", content: str, snapshot_time: Optional[
         os.makedirs(journal_dir, exist_ok=True)
         date_str = snapshot_time or datetime.utcnow().strftime("%Y-%m-%d")
         journal_path = os.path.join(journal_dir, f"{date_str}.md")
+        # Dedup: skip if identical content already archived in this journal file
+        content_hash = hashlib.md5(content.strip().encode("utf-8")).hexdigest()
+        if os.path.isfile(journal_path):
+            with open(journal_path, "r", encoding="utf-8") as f:
+                existing = f.read()
+            if content_hash in existing:
+                return
         # Separator between entries when multiple compacts happen in the same day
-        header = f"\n\n# === Archived at {datetime.utcnow().isoformat()} ===\n\n"
+        header = f"\n\n# === Archived at {datetime.utcnow().isoformat()} [hash:{content_hash}] ===\n\n"
         utils.append_with_lock(journal_path, header + content)
     except Exception:
         logger.warning("Failed to write journal entry", exc_info=True)
@@ -494,8 +503,8 @@ def _run_compaction_job(
                         item.get("category", "episodic")
                     )
                     content = item.get("content", "").strip()
-                    tags = item.get("tags", [])
-                    entities = item.get("entities", [])
+                    tags = item.get("tags") or []
+                    entities = item.get("entities") or []
                     # Use original event timestamp from RECENT.md when available
                     raw_ts = item.get("occurred_at")
                     occurred_at = raw_ts if (raw_ts and raw_ts != "null") else distilled_at
