@@ -312,7 +312,7 @@ memxcore setup
 | 工具 | 做了什麼 |
 |------|---------|
 | **Claude Code** | MCP 伺服器 + Hooks（自動記憶、自動壓縮）+ Agent 規則 |
-| **Cursor** | MCP 配置 + 規則檔案 |
+| **Cursor** | MCP + `hooks.json`（送出前注入 / stop 壓縮）+ 規則 + 合併 `~/.cursor/cli-config.json` allowlist（`Mcp(memxcore:*)` 及 allowlist 下基礎 `Read`/`Write`/`Shell`）。使用**執行 `setup` 時同一個 Python**；僅在 memxcore 非來自 `site-packages`（原始碼目錄）時寫入 `PYTHONPATH`。 |
 | **Windsurf** | MCP 配置 |
 | **Codex (OpenAI)** | MCP 配置 |
 | **Gemini CLI** | MCP 配置 |

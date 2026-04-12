@@ -312,7 +312,7 @@ Auto-detects and configures:
 | Tool | What it does |
 |------|-------------|
 | **Claude Code** | MCP server + hooks (auto-remember, auto-compact) + agent rules |
-| **Cursor** | MCP config + rules file |
+| **Cursor** | MCP + `hooks.json` (beforeSubmit + stop) + rules + merges `~/.cursor/cli-config.json` allowlist (`Mcp(memxcore:*)`, baseline `Read`/`Write`/`Shell` when needed). Uses the **same Python you run `setup` with**; adds `PYTHONPATH` only when memxcore is loaded from a source checkout (not from `site-packages`). |
 | **Windsurf** | MCP config |
 | **Codex (OpenAI)** | MCP config |
 | **Gemini CLI** | MCP config |
@@ -326,11 +326,15 @@ MCP server config for any tool:
     "memxcore": {
       "command": "/path/to/.venv/bin/python",
       "args": ["-m", "memxcore.mcp_server"],
-      "env": { "MEMXCORE_WORKSPACE": "/path/to/workspace" }
+      "env": {
+        "MEMXCORE_WORKSPACE": "/path/to/workspace"
+      }
     }
   }
 }
 ```
+
+If memxcore is not installed in that interpreter’s `site-packages`, add `"PYTHONPATH": "/path/to/parent-of-memxcore-package"` to `env` so `-m memxcore.mcp_server` resolves.
 
 ---
 

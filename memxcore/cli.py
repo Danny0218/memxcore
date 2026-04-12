@@ -17,11 +17,12 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
 import warnings
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 # Suppress noisy third-party warnings during CLI usage
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -33,6 +34,109 @@ warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF 
 warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
+
+
+def _memxcore_launch_from_paths(memxcore_init_path: str, python_executable: str) -> Dict[str, Any]:
+    """Decide whether MCP / hooks need PYTHONPATH (source checkout vs site-packages wheel).
+
+    Pip / wheel: ``.../site-packages/memxcore/__init__.py`` → no PYTHONPATH (same interpreter
+    can import memxcore when Cursor spawns MCP).
+
+    Local repo / typical editable: package lives outside ``site-packages`` → set PYTHONPATH to
+    the directory that must prefix ``sys.path`` (parent of the ``memxcore`` package folder).
+    """
+    init_file = os.path.abspath(memxcore_init_path)
+    norm = init_file.replace("\\", "/")
+    in_site_packages = "site-packages" in norm.split("/")
+
+    pkg_dir = os.path.dirname(init_file)
+    import_root = os.path.dirname(pkg_dir)
+
+    if in_site_packages:
+        return {
+            "python_path": os.path.abspath(python_executable),
+            "pythonpath": None,
+            "layout": "site_packages",
+        }
+    return {
+        "python_path": os.path.abspath(python_executable),
+        "pythonpath": import_root,
+        "layout": "source_tree",
+    }
+
+
+def _memxcore_launch_context() -> Dict[str, Any]:
+    """Launch context for the interpreter currently running ``memxcore setup``."""
+    import memxcore
+
+    return _memxcore_launch_from_paths(memxcore.__file__, sys.executable)
+
+
+def _merge_cursor_cli_config(cursor_home: str, dry_run: bool) -> None:
+    """Ensure ~/.cursor/cli-config.json allows memxcore MCP + baseline Cursor CLI agent tools.
+
+    Uses official permission tokens (``Mcp(server:tool)``). See:
+    https://cursor.com/docs/cli/reference/permissions
+    """
+    path = os.path.join(cursor_home, "cli-config.json")
+
+    if dry_run:
+        print(f"  [dry-run] Would merge memxcore + CLI permissions into ~/.cursor/cli-config.json")
+        return
+
+    data: Dict[str, Any] = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data = loaded
+        except (json.JSONDecodeError, OSError):
+            data = {}
+
+    perms = data.get("permissions")
+    if not isinstance(perms, dict):
+        perms = {}
+        data["permissions"] = perms
+
+    allow: List[str] = perms.get("allow") if isinstance(perms.get("allow"), list) else []
+    deny: List[str] = perms.get("deny") if isinstance(perms.get("deny"), list) else []
+    perms["allow"] = allow
+    perms["deny"] = deny
+
+    def _has_family(pattern_prefix: str) -> bool:
+        return any(isinstance(x, str) and x.startswith(pattern_prefix) for x in allow)
+
+    def _has_memxcore_mcp_rule() -> bool:
+        for x in allow:
+            if not isinstance(x, str):
+                continue
+            if x.startswith("Mcp(memxcore:") or x.startswith("Mcp(memxcore, "):
+                return True
+        return False
+
+    insert_at = 0
+    bundle: List[str] = []
+    if not _has_memxcore_mcp_rule():
+        bundle.append("Mcp(memxcore:*)")
+
+    if data.get("approvalMode") == "allowlist":
+        if not _has_family("Read("):
+            bundle.append("Read(**)")
+        if not _has_family("Write("):
+            bundle.append("Write(**)")
+        if not _has_family("Shell("):
+            bundle.append("Shell(**)")
+
+    for tok in reversed(bundle):
+        if tok not in allow:
+            allow.insert(insert_at, tok)
+
+    os.makedirs(cursor_home, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print("  ok  Cursor CLI permissions (~/.cursor/cli-config.json)")
 
 
 def _get_manager(tenant_id: Optional[str] = None):
@@ -523,12 +627,12 @@ def _check_import(module: str, package: str, fix: str, required: bool) -> bool:
 
 def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_override: Optional[str] = None) -> None:
     """One-command setup: detect installed tools and configure MCP + hooks + rules."""
-    import json
     import shutil
     import subprocess
 
-    python_path = sys.executable
     from memxcore.core.paths import _is_site_packages
+
+    python_path = sys.executable
     memx_claude_md = os.path.join(os.path.dirname(__file__), "CLAUDE.md")
 
     # ── Resolve workspace (must be explicit) ─────────────────────────
@@ -563,6 +667,16 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_overrid
             workspace = user_input if user_input else default_ws
         workspace = os.path.abspath(os.path.expanduser(workspace))
         print(f"  Workspace: {workspace}")
+
+    launch = _memxcore_launch_context()
+    python_path = launch["python_path"]
+    if launch.get("layout") == "site_packages":
+        print("  Layout:    memxcore in site-packages (pip install — MCP/hooks use this Python only)")
+    else:
+        print(
+            "  Layout:    memxcore from source tree — MCP + hooks will set PYTHONPATH to:\n"
+            f"             {launch.get('pythonpath')}"
+        )
 
     # ── Detect installed tools ────────────────────────────────────────
     tools_found = []
@@ -604,10 +718,13 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_overrid
     total_steps = len(tools_found)
 
     # MCP server config (shared across tools)
+    mcp_env: Dict[str, str] = {"MEMXCORE_WORKSPACE": workspace}
+    if launch.get("pythonpath"):
+        mcp_env["PYTHONPATH"] = launch["pythonpath"]
     mcp_config = {
         "command": python_path,
         "args": ["-m", "memxcore.mcp_server"],
-        "env": {"MEMXCORE_WORKSPACE": workspace},
+        "env": mcp_env,
     }
 
     # ── Claude Code ───────────────────────────────────────────────────
@@ -616,10 +733,18 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_overrid
         print(f"[{step}/{total_steps}] Claude Code")
 
         # MCP registration
-        mcp_cmd = ["claude", "mcp", "add", "-s", "user",
-                   "-e", f"MEMXCORE_WORKSPACE={workspace}",
-                   "memxcore", "--",
-                   python_path, "-m", "memxcore.mcp_server"]
+        mcp_cmd = [
+            "claude",
+            "mcp",
+            "add",
+            "-s",
+            "user",
+            "-e",
+            f"MEMXCORE_WORKSPACE={workspace}",
+        ]
+        if launch.get("pythonpath"):
+            mcp_cmd.extend(["-e", f"PYTHONPATH={launch['pythonpath']}"])
+        mcp_cmd.extend(["memxcore", "--", python_path, "-m", "memxcore.mcp_server"])
         if dry_run:
             print(f"  [dry-run] Would run: {' '.join(mcp_cmd)}")
         else:
@@ -635,7 +760,13 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_overrid
         if not skip_hooks:
             claude_dir = os.path.expanduser("~/.claude")
             settings_path = os.path.join(claude_dir, "settings.json")
-            _write_claude_hooks(settings_path, workspace, python_path, dry_run)
+            _write_claude_hooks(
+                settings_path,
+                workspace,
+                python_path,
+                dry_run,
+                pythonpath=launch.get("pythonpath"),
+            )
             if not dry_run:
                 actions_taken.append("Claude Code: hooks")
 
@@ -659,6 +790,20 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_overrid
         _copy_cursor_rules(memx_claude_md, rules_path, "~/.cursor/rules/memxcore.mdc", dry_run)
         if not dry_run:
             actions_taken.append("Cursor: rules")
+
+        if not skip_hooks:
+            _write_cursor_hooks(
+                python_path,
+                workspace,
+                dry_run,
+                pythonpath=launch.get("pythonpath"),
+            )
+            if not dry_run:
+                actions_taken.append("Cursor: hooks")
+
+        _merge_cursor_cli_config(cursor_dir, dry_run)
+        if not dry_run:
+            actions_taken.append("Cursor: CLI permissions")
 
     # ── Windsurf ──────────────────────────────────────────────────────
     if "windsurf" in tools_found:
@@ -699,20 +844,34 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_overrid
     elif actions_taken:
         print(f"Done! ({', '.join(actions_taken)})")
         print("\nRestart your tools for changes to take effect.")
+        if "cursor" in tools_found:
+            print(
+                "\n  Cursor CLI: if `agent mcp list` shows memxcore as needing approval, run once:\n"
+                '    agent --approve-mcps "hello"\n'
+                "  or approve in the interactive prompt so MCP tools load in allowlist mode."
+            )
     else:
         print("Nothing new to configure — MemXCore is already set up.")
 
 
-def _write_claude_hooks(settings_path: str, workspace: str, python_path: str, dry_run: bool) -> None:
+def _write_claude_hooks(
+    settings_path: str,
+    workspace: str,
+    python_path: str,
+    dry_run: bool,
+    pythonpath: Optional[str] = None,
+) -> None:
     """Write auto-remember + auto-compact hooks to Claude Code settings.json."""
-    import json
     import shlex
     import shutil
 
     # Shell-quote paths to handle spaces and special characters
     q_ws = shlex.quote(workspace)
     q_py = shlex.quote(python_path)
-    env_prefix = f"MEMXCORE_WORKSPACE={q_ws}"
+    env_parts = [f"MEMXCORE_WORKSPACE={q_ws}"]
+    if pythonpath:
+        env_parts.append(f"PYTHONPATH={shlex.quote(pythonpath)}")
+    env_prefix = " ".join(env_parts)
     hooks_config = {
         "UserPromptSubmit": [{"hooks": [{
             "type": "command",
@@ -757,6 +916,120 @@ def _write_claude_hooks(settings_path: str, workspace: str, python_path: str, dr
         json.dump(settings, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print("  ok  Hooks configured")
+
+
+def _memxcore_cursor_stop_marker(command: str) -> bool:
+    if not isinstance(command, str):
+        return False
+    return "memxcore.hooks.cursor_stop" in command or "memxcore-cursor-stop.sh" in command
+
+
+def _memxcore_before_submit_marker(command: str) -> bool:
+    if not isinstance(command, str):
+        return False
+    return (
+        "memxcore.hooks.user_prompt_submit" in command
+        or "memxcore-before-submit.sh" in command
+    )
+
+
+def _write_cursor_hooks(
+    python_path: str,
+    workspace: str,
+    dry_run: bool = False,
+    pythonpath: Optional[str] = None,
+) -> None:
+    """Install Cursor ``hooks.json``: beforeSubmitPrompt (memory inject) + stop (compact)."""
+    import shlex
+    import stat
+
+    cursor_home = os.path.expanduser("~/.cursor")
+    hooks_dir = os.path.join(cursor_home, "hooks")
+    stop_script = os.path.join(hooks_dir, "memxcore-cursor-stop.sh")
+    submit_script = os.path.join(hooks_dir, "memxcore-before-submit.sh")
+    hooks_json_path = os.path.join(cursor_home, "hooks.json")
+
+    q_py = shlex.quote(python_path)
+    q_ws = shlex.quote(workspace)
+    q_pp = shlex.quote(pythonpath) if pythonpath else None
+    env_block = f"export MEMXCORE_WORKSPACE={q_ws}\n"
+    if q_pp:
+        env_block += f"export PYTHONPATH={q_pp}\n"
+    stop_body = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"{env_block}"
+        f"exec {q_py} -m memxcore.hooks.cursor_stop\n"
+    )
+    submit_body = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"{env_block}"
+        f"exec {q_py} -m memxcore.hooks.user_prompt_submit\n"
+    )
+
+    if dry_run:
+        print(f"  [dry-run] Would write {submit_script}")
+        print(f"  [dry-run] Would write {stop_script}")
+        print(f"  [dry-run] Would merge beforeSubmitPrompt + stop into {hooks_json_path}")
+        return
+
+    os.makedirs(hooks_dir, exist_ok=True)
+    mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
+    with open(submit_script, "w", encoding="utf-8") as f:
+        f.write(submit_body)
+    os.chmod(submit_script, mode)
+    with open(stop_script, "w", encoding="utf-8") as f:
+        f.write(stop_body)
+    os.chmod(stop_script, mode)
+
+    data: dict = {"version": 1, "hooks": {}}
+    if os.path.isfile(hooks_json_path):
+        try:
+            with open(hooks_json_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data = loaded
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if data.get("version") != 1:
+        data["version"] = 1
+    hooks_obj = data.get("hooks")
+    if not isinstance(hooks_obj, dict):
+        hooks_obj = {}
+        data["hooks"] = hooks_obj
+
+    # beforeSubmitPrompt — same behavior as Claude Code UserPromptSubmit
+    bsp_list = hooks_obj.get("beforeSubmitPrompt")
+    if not isinstance(bsp_list, list):
+        bsp_list = []
+    bsp_clean = [
+        entry
+        for entry in bsp_list
+        if isinstance(entry, dict)
+        and not _memxcore_before_submit_marker(str(entry.get("command", "")))
+    ]
+    bsp_clean.append({"command": submit_script, "timeout": 30})
+    hooks_obj["beforeSubmitPrompt"] = bsp_clean
+
+    # stop — compact (no transcript in Cursor payload)
+    stop_list = hooks_obj.get("stop")
+    if not isinstance(stop_list, list):
+        stop_list = []
+    stop_clean = [
+        entry
+        for entry in stop_list
+        if isinstance(entry, dict)
+        and not _memxcore_cursor_stop_marker(str(entry.get("command", "")))
+    ]
+    stop_clean.append({"command": stop_script, "timeout": 120})
+    hooks_obj["stop"] = stop_clean
+
+    with open(hooks_json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print("  ok  Cursor hooks (beforeSubmitPrompt → memory, stop → compact)")
 
 
 def _write_codex_toml(path: str, python_path: str, workspace: str, dry_run: bool) -> None:
@@ -960,7 +1233,11 @@ def main() -> None:
     # setup
     p_setup = sub.add_parser("setup", help="Auto-detect tools and configure MCP + hooks + rules")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
-    p_setup.add_argument("--skip-hooks", action="store_true", help="Skip Claude Code hook configuration")
+    p_setup.add_argument(
+        "--skip-hooks",
+        action="store_true",
+        help="Skip hook configuration (Claude Code settings + Cursor hooks.json)",
+    )
     p_setup.add_argument("--workspace", default=None, help="Workspace path (where memories are stored)")
 
     # config

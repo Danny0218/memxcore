@@ -1,12 +1,12 @@
 """
-memxcore — UserPromptSubmit hook
+memxcore — UserPromptSubmit hook (Claude Code) / beforeSubmitPrompt (Cursor)
 
-On every user message, perform a lightweight memory search and inject into Claude context.
+On every user message, perform a lightweight memory search and inject context.
 Uses direct file scanning + keyword matching without loading an embedding model (< 0.5s).
 Full RAG search is left to the MCP search tool.
 
-Input (stdin):  JSON  { "user_prompt": "..." }
-Output (stdout): JSON { "systemMessage": "..." } or {}
+Input (stdin):  JSON with ``user_prompt`` (Claude) and/or ``prompt`` (Cursor).
+Output (stdout): JSON ``{ "systemMessage": "..." }`` or ``{}``
 Exit: always 0 (never block user input)
 
 Environment variables (optional):

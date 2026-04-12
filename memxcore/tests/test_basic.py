@@ -349,6 +349,112 @@ class TestCLI:
         assert "Dependencies" in captured.out
 
 
+class TestMemxcoreLaunchPaths:
+    def test_site_packages_no_pythonpath(self):
+        from memxcore.cli import _memxcore_launch_from_paths
+
+        init_p = "/opt/homebrew/lib/python3.11/site-packages/memxcore/__init__.py"
+        ctx = _memxcore_launch_from_paths(init_p, "/opt/homebrew/bin/python3.11")
+        assert ctx["layout"] == "site_packages"
+        assert ctx["pythonpath"] is None
+        assert ctx["python_path"] == "/opt/homebrew/bin/python3.11"
+
+    def test_source_tree_sets_pythonpath(self):
+        from memxcore.cli import _memxcore_launch_from_paths
+
+        init_p = "/Users/dev/proj/danny-agent/memxcore/__init__.py"
+        ctx = _memxcore_launch_from_paths(init_p, "/usr/bin/python3")
+        assert ctx["layout"] == "source_tree"
+        assert ctx["pythonpath"] == "/Users/dev/proj/danny-agent"
+        assert ctx["python_path"] == "/usr/bin/python3"
+
+
+class TestMergeCursorCliConfig:
+    def test_inserts_memxcore_and_baseline(self, tmp_path):
+        from memxcore.cli import _merge_cursor_cli_config
+
+        cursor_home = str(tmp_path / ".cursor")
+        os.makedirs(cursor_home, exist_ok=True)
+        cfg = {
+            "version": 1,
+            "approvalMode": "allowlist",
+            "permissions": {"allow": ["WebFetch(example.com)"], "deny": []},
+        }
+        with open(os.path.join(cursor_home, "cli-config.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+
+        _merge_cursor_cli_config(cursor_home, dry_run=False)
+
+        with open(os.path.join(cursor_home, "cli-config.json"), "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        allow = loaded["permissions"]["allow"]
+        assert "Mcp(memxcore:*)" in allow
+        assert "Read(**)" in allow
+        assert "Write(**)" in allow
+        assert "Shell(**)" in allow
+        assert "WebFetch(example.com)" in allow
+
+    def test_skips_when_memxcore_rule_present(self, tmp_path):
+        from memxcore.cli import _merge_cursor_cli_config
+
+        cursor_home = str(tmp_path / ".cursor2")
+        os.makedirs(cursor_home, exist_ok=True)
+        cfg = {
+            "version": 1,
+            "approvalMode": "allowlist",
+            "permissions": {"allow": ["Mcp(memxcore:search)", "Read(**)"], "deny": []},
+        }
+        with open(os.path.join(cursor_home, "cli-config.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+
+        _merge_cursor_cli_config(cursor_home, dry_run=False)
+        with open(os.path.join(cursor_home, "cli-config.json"), "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        allow = loaded["permissions"]["allow"]
+        assert allow.count("Mcp(memxcore:*)") == 0
+        assert "Mcp(memxcore:search)" in allow
+
+
+class TestCursorStopHook:
+    def test_skips_non_stop_events(self, monkeypatch, capsys):
+        from io import StringIO
+
+        import sys
+
+        calls: list = []
+        monkeypatch.setattr(
+            "memxcore.cli.cmd_compact",
+            lambda tenant_id=None: calls.append(True),
+        )
+        monkeypatch.setattr(sys, "stdin", StringIO(json.dumps({"hook_event_name": "foo"})))
+        from memxcore.hooks.cursor_stop import main
+
+        main()
+        assert calls == []
+        assert capsys.readouterr().out.strip() == "{}"
+
+    def test_invokes_compact_for_stop_completed(self, monkeypatch, capsys):
+        from io import StringIO
+
+        import sys
+
+        calls: list = []
+        monkeypatch.setattr(
+            "memxcore.cli.cmd_compact",
+            lambda tenant_id=None: calls.append(tenant_id),
+        )
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            StringIO(json.dumps({"hook_event_name": "stop", "status": "completed"})),
+        )
+        from memxcore.hooks.cursor_stop import main
+
+        main()
+        assert len(calls) == 1
+        assert capsys.readouterr().out.strip() == "{}"
+
+
 # -- Auto-remember hook --------------------------------------------------------
 
 class TestAutoRememberTranscript:
