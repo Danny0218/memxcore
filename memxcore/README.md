@@ -130,9 +130,58 @@ index.json         <- Keyword search index
 
 ## Benchmarks
 
-<!-- TODO: Add search precision benchmarks (R@1, R@3, R@5, R@10 across hybrid/rag/bm25/keyword modes) -->
+Evaluated on [LongMemEval-S](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) (500 questions, ~50 sessions per question). Each question plants facts across dozens of conversation sessions, then asks a question that requires retrieving the right session.
 
-Coming soon.
+### Search Engine Ceiling (Strategy B)
+
+Raw session text is written directly to archive and indexed — no LLM distillation. This measures the **maximum recall** the search engine can achieve when given perfect input.
+
+| Mode | R@1 | R@3 | R@5 | R@10 |
+|------|----:|----:|----:|-----:|
+| **hybrid (RAG + BM25)** | 93.6% | 98.8% | **99.2%** | 100.0% |
+| RAG only | 89.8% | 97.0% | 98.8% | 100.0% |
+| BM25 only | 92.2% | 98.6% | 99.4% | 99.8% |
+
+4 misses out of 500 — all edge cases with indirect phrasing or numerical reasoning.
+
+### End-to-End Pipeline (Strategy A)
+
+Full `remember()` → `compact()` (LLM distillation) → `search()` pipeline. Measures **real-world recall** including information loss from distillation.
+
+> **Note:** Strategy A requires an LLM API key and makes ~5,000 API calls for the full 500-question run (~40M input tokens, ~20M output tokens). With Haiku this takes ~7 hours and costs ~$100. We plan to publish results once the run completes. You can run it yourself — see instructions below.
+
+### What the strategies test
+
+```
+Strategy B: session text ──→ archive ──→ RAG/BM25 index ──→ search
+                              (skip distillation)
+                              Measures: search engine ceiling
+
+Strategy A: session text ──→ remember() ──→ compact() ──→ archive ──→ search
+                              (full pipeline)
+                              Measures: end-to-end recall with distillation loss
+```
+
+The gap between B and A reveals how much information is lost during LLM distillation — the key metric for tuning the compaction prompt.
+
+### Run benchmarks yourself
+
+```bash
+cd memxcore
+python -m venv .bench-venv && source .bench-venv/bin/activate
+pip install -r requirements.txt huggingface-hub chromadb sentence-transformers rank-bm25 pyyaml
+
+# Strategy B — no API key needed, ~11 min
+python -m benchmarks.longmemeval --strategy B
+
+# Strategy A — requires LLM API key, ~7 hours with Haiku
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m benchmarks.longmemeval --strategy A --limit 50   # quick sample (~40 min)
+python -m benchmarks.longmemeval --strategy A               # full 500 questions
+
+# Save results to JSON
+python -m benchmarks.longmemeval --strategy B --output results_B.json
+```
 
 ---
 

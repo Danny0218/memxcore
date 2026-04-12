@@ -66,6 +66,7 @@ class RAGIndex:
         collection_name: str = "memxcore",
     ) -> None:
         self._available = False
+        self._client = None
         self._collection = None
         self._lock = threading.Lock()
         self._config = config
@@ -96,14 +97,26 @@ class RAGIndex:
             finally:
                 sys.stderr = _orig_stderr
 
-            client = chromadb.PersistentClient(path=self._chroma_dir)
-            self._collection = client.get_or_create_collection(
+            self._client = chromadb.PersistentClient(path=self._chroma_dir)
+            self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
                 embedding_function=ef,
                 metadata={"hnsw:space": "cosine"},
             )
             self._available = True
         except Exception:
+            self._available = False
+
+    def close(self) -> None:
+        """Release ChromaDB client resources (background threads, file handles)."""
+        with self._lock:
+            self._collection = None
+            if self._client is not None:
+                try:
+                    self._client.close()
+                except Exception:
+                    pass
+                self._client = None
             self._available = False
 
     # ── Public API ─────────────────────────────────────────────────────────────

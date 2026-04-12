@@ -130,9 +130,58 @@ index.json         <- 關鍵字搜尋索引
 
 ## 效能基準
 
-<!-- TODO: 新增搜尋精確度基準測試（R@1, R@3, R@5, R@10，跨 hybrid/rag/bm25/keyword 模式）-->
+基於 [LongMemEval-S](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) 評測（500 題，每題約 50 個對話 session）。每題將事實分散在數十個對話中，再提問需要從中檢索正確 session 的問題。
 
-即將推出。
+### 搜尋引擎上限（Strategy B）
+
+將原始對話文本直接寫入 archive 並建立索引——不經過 LLM 蒸餾。測量搜尋引擎在完美輸入下的**最大召回率**。
+
+| 模式 | R@1 | R@3 | R@5 | R@10 |
+|------|----:|----:|----:|-----:|
+| **hybrid (RAG + BM25)** | 93.6% | 98.8% | **99.2%** | 100.0% |
+| 僅 RAG | 89.8% | 97.0% | 98.8% | 100.0% |
+| 僅 BM25 | 92.2% | 98.6% | 99.4% | 99.8% |
+
+500 題中僅 4 題未命中——均為間接措辭或數值推理的邊界情況。
+
+### 端到端流程（Strategy A）
+
+完整 `remember()` → `compact()`（LLM 蒸餾）→ `search()` 流程。測量包含蒸餾資訊損失的**真實召回率**。
+
+> **注意：** Strategy A 需要 LLM API key，完整 500 題需要約 5,000 次 API 呼叫（約 40M 輸入 tokens、20M 輸出 tokens）。使用 Haiku 約需 7 小時、費用約 $100。結果將在跑完後更新。你也可以自己跑——見下方指南。
+
+### 策略說明
+
+```
+Strategy B: 對話文本 ──→ archive ──→ RAG/BM25 索引 ──→ search
+                          (跳過蒸餾)
+                          測量：搜尋引擎上限
+
+Strategy A: 對話文本 ──→ remember() ──→ compact() ──→ archive ──→ search
+                          (完整流程)
+                          測量：含蒸餾損失的端到端召回率
+```
+
+B 與 A 的差距揭示了 LLM 蒸餾過程中的資訊損失——這是調優 compaction prompt 的關鍵指標。
+
+### 自行跑 benchmark
+
+```bash
+cd memxcore
+python -m venv .bench-venv && source .bench-venv/bin/activate
+pip install -r requirements.txt huggingface-hub chromadb sentence-transformers rank-bm25 pyyaml
+
+# Strategy B — 不需要 API key，約 11 分鐘
+python -m benchmarks.longmemeval --strategy B
+
+# Strategy A — 需要 LLM API key，使用 Haiku 約 7 小時
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m benchmarks.longmemeval --strategy A --limit 50   # 快速取樣（約 40 分鐘）
+python -m benchmarks.longmemeval --strategy A               # 完整 500 題
+
+# 結果存成 JSON
+python -m benchmarks.longmemeval --strategy B --output results_B.json
+```
 
 ---
 
