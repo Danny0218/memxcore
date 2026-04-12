@@ -12,6 +12,7 @@ Works with **Claude Code**, **Cursor**, **Gemini CLI**, and any MCP-compatible t
 
 ```
 RECENT.md          <- L0: raw append log (WAL). Every remember() lands here.
+journal/<date>.md  <- L0.5: permanent raw archive. Compact saves here before clearing RECENT.md.
 archive/<cat>.md   <- L1: distilled long-term memory, per category, with YAML front matter
 USER.md            <- L2: permanent facts (remember(permanent=True)), never compacted
 chroma/            <- RAG vector index (rebuilt from archive/ files, lossy-safe)
@@ -25,8 +26,9 @@ index.json         <- Keyword search index (tags + summaries from archive/ front
 
 **Write flow:**
 1. `remember(text)` -> append to RECENT.md
-2. When RECENT.md exceeds token threshold -> LLM distills into structured facts
-3. Each fact -> written to `archive/<category>.md` + upserted into ChromaDB (dual-write)
+2. When RECENT.md exceeds token threshold -> raw content archived to `journal/<date>.md` (permanent, lossless)
+3. LLM distills into structured facts, preserving original event timestamps (`occurred_at`)
+4. Each fact -> written to `archive/<category>.md` + upserted into ChromaDB (dual-write)
 
 ---
 
@@ -179,9 +181,11 @@ If you prefer manual configuration, the MCP server config for any tool is:
 | Tool | Args | Description |
 |------|------|-------------|
 | `remember` | `text`, `category?`, `permanent?`, `tenant_id?` | Store a memory |
-| `search` | `query`, `max_results?`, `tenant_id?` | Retrieve memories (semantic + keyword) |
-| `compact` | `force?`, `tenant_id?` | Distill RECENT.md into categorized archives |
-| `reindex` | `category?`, `tenant_id?` | Rebuild RAG index after manual edits |
+| `search` | `query`, `max_results?`, `after?`, `before?`, `tenant_id?` | Retrieve memories (semantic + keyword), with optional time range |
+| `compact` | `force?`, `tenant_id?` | Distill RECENT.md into categorized archives (also archives to journal) |
+| `flush` | `tenant_id?` | Move RECENT.md to journal (lossless, no LLM) |
+| `reindex` | `category?`, `tenant_id?` | Rebuild RAG + BM25 index after manual edits |
+| `purge_journal` | `keep_days?`, `tenant_id?` | Delete journal files older than N days (default 30) |
 | `set_config` | `key`, `value`, `tenant_id?` | Set a config value (dot notation, e.g. `llm.model`) |
 
 **Categories for `remember`:**
@@ -217,9 +221,14 @@ memxcore doctor                       # check system readiness
 memxcore config show                  # show current config
 memxcore config set llm.model openai/gpt-4o   # change LLM provider
 memxcore config path                  # show config file location
-memxcore reindex                      # rebuild RAG index
-memxcore compact                      # force distillation
-memxcore search "query"               # search memories (debug)
+memxcore reindex                      # rebuild RAG + BM25 index
+memxcore compact                      # force distillation (also archives to journal)
+memxcore flush                        # move RECENT.md to journal (no LLM)
+memxcore search "query"               # search memories
+memxcore search --after 2026-04-08 "query"   # search with time range
+memxcore timeline                     # show last 7 days of memory activity
+memxcore timeline --days 3            # show last 3 days
+memxcore purge-journal --keep-days 30 # delete journal files older than 30 days
 memxcore benchmark                    # search precision benchmark
 memxcore mine <path>                  # import conversations
 memxcore --tenant alice doctor        # multi-tenant
@@ -257,6 +266,9 @@ memxcore/
     +-- USER.md                Permanent facts (permanent=True). Never compacted.
     +-- index.json             Keyword search index. Auto-rebuilt after compaction.
     +-- chroma/                ChromaDB vector index. Rebuildable from archive/.
+    +-- journal/               Permanent raw archive (lossless, never auto-deleted).
+        +-- 2026-04-10.md      Daily journal — original RECENT.md content preserved.
+        +-- 2026-04-11.md
     +-- archive/
         +-- user_model.md      User identity, preferences, feedback
         +-- domain.md          Domain/technical knowledge
@@ -272,15 +284,30 @@ memxcore/
 topic: project_state
 tags: [api, testing]
 last_distilled: 2026-04-07T14:23:01
-confidence_level: 4
+confidence_level: 1
 ---
 
-## [2026-04-07T14:23:01]
+## [2026-04-07T12:30:00]
 
 Unit test initiative complete: 234 tests passing across 9 packages.
 ```
 
-Archive files are plain Markdown — edit them directly. After editing, run `memxcore reindex <category>` to update the RAG index.
+The `## [timestamp]` is the original event time (when `remember()` was called), not the compaction time. `last_distilled` in the front matter tracks when compaction ran.
+
+Archive files are plain Markdown — edit them directly. After editing, run `memxcore reindex <category>` to update the RAG + BM25 index.
+
+**Journal file format:**
+```markdown
+# === Archived at 2026-04-10T14:23:01.123456 ===
+
+# [2026-04-10T12:30:00] [category:project_state] Memory
+Unit test initiative complete: 234 tests passing.
+
+# [2026-04-10T13:15:00] Memory
+User prefers concise responses.
+```
+
+Journal files preserve the exact RECENT.md content with original timestamps. Use `memxcore timeline` to browse them, or `memxcore purge-journal --keep-days N` to clean up old ones.
 
 ---
 

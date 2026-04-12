@@ -14,6 +14,31 @@ from .rag import _split_archive_sections
 logger = logging.getLogger(__name__)
 
 
+# ── Journal archival ─────────────────────────────────────────────────────────
+
+def _append_to_journal(manager: "object", content: str, snapshot_time: Optional[str] = None) -> None:
+    """
+    Append raw RECENT.md content to a daily journal file for permanent archival.
+    Uses utils.append_with_lock() for cross-process safety.
+    Failures are logged but never block compaction.
+
+    snapshot_time: ISO date string (YYYY-MM-DD) for the journal filename.
+                   If not provided, uses current UTC date.
+    """
+    try:
+        journal_dir = getattr(manager, "journal_dir", None)
+        if not journal_dir:
+            return
+        os.makedirs(journal_dir, exist_ok=True)
+        date_str = snapshot_time or datetime.utcnow().strftime("%Y-%m-%d")
+        journal_path = os.path.join(journal_dir, f"{date_str}.md")
+        # Separator between entries when multiple compacts happen in the same day
+        header = f"\n\n# === Archived at {datetime.utcnow().isoformat()} ===\n\n"
+        utils.append_with_lock(journal_path, header + content)
+    except Exception:
+        logger.warning("Failed to write journal entry", exc_info=True)
+
+
 # ── Token estimation ──────────────────────────────────────────────────────────
 
 def _estimate_tokens(text: str) -> int:
@@ -82,8 +107,12 @@ Only include a habit if you see clear evidence in the notes — do not infer fro
    - "Alice joined frontend team in March" → {{"s":"Alice","p":"joined","o":"frontend-team","when":"2026-03-01"}}
    - "Redis chosen for session storage" → {{"s":"Redis","p":"used_for","o":"session-storage"}}
    Omit "triples" if no entity relationship is present.
+8. IMPORTANT: Each raw note starts with "# [TIMESTAMP]". Extract the timestamp
+   closest to each fact and return it as "occurred_at" (ISO 8601 format).
+   If a fact spans multiple notes, use the earliest timestamp.
+   If no timestamp is found, use null.
 
-Format: [{{"category": "<id>", "content": "<fact>", "tags": ["<topic>"], "entities": ["<name>"], "triples": [{{"s":"<subj>","p":"<pred>","o":"<obj>","when":"<date or null>"}}]}}]
+Format: [{{"category": "<id>", "content": "<fact>", "tags": ["<topic>"], "entities": ["<name>"], "occurred_at": "<ISO timestamp or null>", "triples": [{{"s":"<subj>","p":"<pred>","o":"<obj>","when":"<date or null>"}}]}}]
 
 Raw notes:
 {content}
@@ -125,13 +154,13 @@ def _word_overlap(a: str, b: str) -> float:
     return len(words_a & words_b) / max(len(words_a), len(words_b))
 
 
-def _write_to_user_permanent(manager: "object", content: str, distilled_at: str) -> None:
+def _write_to_user_permanent(manager: "object", content: str, timestamp: str) -> None:
     """Write a fact to USER.md (L2), using the same format as archive for _split_archive_sections parsing."""
     user_path = getattr(manager, "user_path", None)
     if not user_path:
         return
     utils.ensure_file(user_path)
-    entry = f"\n\n## [{distilled_at}]\n\n{content.strip()}\n"
+    entry = f"\n\n## [{timestamp}]\n\n{content.strip()}\n"
     write_lock = getattr(manager, "_write_lock", None)
     if write_lock:
         with write_lock:
@@ -148,7 +177,7 @@ def _maybe_promote(
     category: str,
     new_content: str,
     tags: List[str],
-    distilled_at: str,
+    timestamp: str,
     rag: "object | None" = None,
     promote_threshold: int = 3,
     similarity_threshold: float = 0.55,
@@ -198,10 +227,10 @@ def _maybe_promote(
 
             # Reached threshold -> promote to L2
             if confidence >= promote_threshold:
-                _write_to_user_permanent(manager, content, distilled_at)
+                _write_to_user_permanent(manager, content, timestamp)
                 if rag is not None:
                     try:
-                        rag.upsert(content, "permanent", tags, distilled_at)
+                        rag.upsert(content, "permanent", tags, timestamp)
                     except Exception:
                         pass
             break
@@ -317,9 +346,13 @@ def _write_to_category_archive(
     category: str,
     content: str,
     tags: List[str],
-    distilled_at: str,
+    timestamp: str,
 ) -> None:
-    """Write a single distilled fact to the corresponding category archive/*.md."""
+    """Write a single distilled fact to the corresponding category archive/*.md.
+
+    timestamp: the section header timestamp — ideally the original event time (occurred_at),
+               falls back to compact time (distilled_at) when unavailable.
+    """
     archive_path = os.path.join(archive_dir, f"{category}.md")
     utils.ensure_file(archive_path)
 
@@ -330,20 +363,23 @@ def _write_to_category_archive(
         existing = ""
 
     front_matter, body = utils.parse_front_matter(existing)
+    # last_distilled reflects when compaction actually ran, not the event time
+    compact_time = datetime.utcnow().isoformat()
     if not front_matter:
         front_matter = {
             "topic": category,
             "tags": tags,
-            "last_distilled": distilled_at,
+            "last_distilled": compact_time,
             "confidence_level": 1,
         }
         body = ""
     else:
         merged = list(set(front_matter.get("tags", [])) | set(tags))
         front_matter["tags"] = merged
-        front_matter["last_distilled"] = distilled_at
+        front_matter["last_distilled"] = compact_time
 
-    new_body = body + f"\n\n## [{distilled_at}]\n\n{content.strip()}\n"
+    # Section header uses the original event timestamp
+    new_body = body + f"\n\n## [{timestamp}]\n\n{content.strip()}\n"
 
     front_yaml = yaml.safe_dump(front_matter, allow_unicode=True).strip()
     rendered = f"---\n{front_yaml}\n---\n\n{new_body.lstrip()}"
@@ -460,6 +496,9 @@ def _run_compaction_job(
                     content = item.get("content", "").strip()
                     tags = item.get("tags", [])
                     entities = item.get("entities", [])
+                    # Use original event timestamp from RECENT.md when available
+                    raw_ts = item.get("occurred_at")
+                    occurred_at = raw_ts if (raw_ts and raw_ts != "null") else distilled_at
                     # Merge tags + entities for indexing (deduplicated, preserve original case)
                     all_tags = list(dict.fromkeys(tags + entities))
                     if content:
@@ -469,10 +508,10 @@ def _run_compaction_job(
                         )
                         # ── Dual-write ────────────────────────────────────
                         _write_to_category_archive(
-                            manager.archive_dir, category, content, all_tags, distilled_at
+                            manager.archive_dir, category, content, all_tags, occurred_at
                         )
                         if rag is not None:
-                            rag.upsert(content, category, all_tags, distilled_at)
+                            rag.upsert(content, category, all_tags, occurred_at)
                         # ── Knowledge Graph triple extraction ─────────
                         kg = getattr(manager, "kg", None)
                         if kg is not None:
@@ -489,7 +528,7 @@ def _run_compaction_job(
                         # L1->L2 promote check (user_model only)
                         _maybe_promote(
                             manager, manager.archive_dir, category,
-                            content, all_tags, distilled_at, rag
+                            content, all_tags, occurred_at, rag
                         )
                 # ── Demote stale project_state -> episodic (no delete) ────
                 _demote_stale_project_state(manager.archive_dir)
@@ -628,6 +667,11 @@ def maybe_compact_recent(manager: "object", force: bool = False) -> "threading.T
                 _snap_lock_held = False
             except RuntimeError:
                 pass
+
+    # ── 6b. Append raw snapshot to daily journal (permanent archival) ──
+    # Use snapshot capture date (not write-time) to avoid midnight boundary issues
+    _snap_date = datetime.utcnow().strftime("%Y-%m-%d")
+    _append_to_journal(manager, snapshot, snapshot_time=_snap_date)
 
     config = getattr(manager, "config", {}) or {}
 

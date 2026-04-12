@@ -4,7 +4,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any, Tuple
 
 import yaml
@@ -17,7 +17,7 @@ _MAX_REMEMBER_BYTES = 1_000_000  # 1MB per remember() call
 
 from . import utils
 from .bm25 import BM25Index
-from .compaction import maybe_compact_recent
+from .compaction import maybe_compact_recent, _append_to_journal
 from .knowledge_graph import KnowledgeGraph
 from .paths import resolve_install_dir
 from .rag import RAGIndex, _split_archive_sections
@@ -72,6 +72,22 @@ def _extract_query_entities(query: str) -> List[str]:
     return list(entities)
 
 
+def _in_time_range(ts: str, after: Optional[str], before: Optional[str]) -> bool:
+    """Check if a timestamp string falls within [after, before] range. Inclusive.
+    Uses lexicographic comparison, which works for ISO 8601 timestamps.
+    Date-only values (YYYY-MM-DD) are padded to include the full day."""
+    if not ts:
+        return True  # no timestamp = don't filter
+    if after and ts < after:
+        return False
+    # Pad date-only 'before' to end of day so "2026-04-10" includes all events on that day
+    if before:
+        b = before if "T" in before else before + "T23:59:59.999999"
+        if ts > b:
+            return False
+    return True
+
+
 @dataclass
 class MemoryResult:
     content: str
@@ -119,6 +135,7 @@ class MemoryManager:
             self.storage_dir = os.path.join(self.root_dir, "storage")
 
         self.archive_dir = os.path.join(self.storage_dir, "archive")
+        self.journal_dir = os.path.join(self.storage_dir, "journal")
         self.recent_path = os.path.join(self.storage_dir, "RECENT.md")
         self.user_path = os.path.join(self.storage_dir, "USER.md")
         self.index_path = os.path.join(self.storage_dir, "index.json")
@@ -127,6 +144,7 @@ class MemoryManager:
 
         # Ensure required directories exist
         os.makedirs(self.archive_dir, exist_ok=True)
+        os.makedirs(self.journal_dir, exist_ok=True)
         for p in (self.recent_path, self.user_path, self.index_path):
             if not os.path.exists(p):
                 if p.endswith(".json"):
@@ -179,6 +197,8 @@ class MemoryManager:
                 with open(snapshot_path, "r", encoding="utf-8") as f:
                     snapshot_content = f.read()
                 if snapshot_content.strip():
+                    # Archive orphaned snapshot to journal before recovery
+                    _append_to_journal(self, snapshot_content)
                     # Prepend snapshot to the beginning of RECENT.md
                     existing = ""
                     if os.path.isfile(self.recent_path):
@@ -310,12 +330,20 @@ class MemoryManager:
             maybe_compact_recent(self)
             return "RECENT.md"
 
-    def search(self, query: str, max_results: int = 10) -> List[MemoryResult]:
+    def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        after: Optional[str] = None,
+        before: Optional[str] = None,
+    ) -> List[MemoryResult]:
         """
         Three-tier search:
         1. Hybrid search (RAG + BM25, RRF fusion) -- with tag-based boosting
         2. LLM relevance judgment -- when hybrid is unavailable or returns no results
         3. Keyword fallback -- last resort
+
+        after/before: ISO 8601 date strings for time-range filtering (inclusive).
         """
         # ── 0. Stale RECENT.md check (defensive) ────────────────────────
         self._maybe_compact_stale()
@@ -333,14 +361,14 @@ class MemoryManager:
                 # First try tag-filtered RAG (search once per entity, take union)
                 tag_hits: Dict[str, Dict] = {}
                 for entity in entities:
-                    for hit in self.rag.search(query, top_k=fetch_k, tag_filter=entity):
+                    for hit in self.rag.search(query, top_k=fetch_k, tag_filter=entity, after=after, before=before):
                         tag_hits.setdefault(hit["content"], hit)
                 # Then run unfiltered RAG to supplement results
-                for hit in self.rag.search(query, top_k=fetch_k):
+                for hit in self.rag.search(query, top_k=fetch_k, after=after, before=before):
                     tag_hits.setdefault(hit["content"], hit)
                 rag_hits = list(tag_hits.values())
             else:
-                rag_hits = self.rag.search(query, top_k=fetch_k)
+                rag_hits = self.rag.search(query, top_k=fetch_k, after=after, before=before)
 
         bm25_hits = []
         if self.bm25.available:
@@ -352,6 +380,12 @@ class MemoryManager:
         if rag_hits or bm25_hits:
             fused = self._rrf_fuse(rag_hits, bm25_hits, max_results)
             if fused:
+                # Apply time-range filter to fused results
+                if after or before:
+                    fused = [
+                        r for r in fused
+                        if _in_time_range(r.metadata.get("distilled_at", ""), after, before)
+                    ]
                 # Append KG results after hybrid results (deduplicated)
                 if kg_results:
                     seen = {r.content for r in fused}
@@ -405,6 +439,53 @@ class MemoryManager:
         thread = maybe_compact_recent(self, force=force)
         if blocking and thread is not None:
             thread.join()
+
+    def flush(self) -> str:
+        """Move RECENT.md content to today's journal file (lossless, no LLM).
+
+        Returns 'flushed' if content was moved, 'empty' if nothing to flush,
+        'error' on I/O failure.
+        """
+        with self._write_lock:
+            try:
+                with open(self.recent_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if not content.strip():
+                    return "empty"
+                # Write to journal FIRST — only clear RECENT.md if journal write succeeds.
+                # Use append_with_lock directly (not _append_to_journal which swallows errors)
+                # so we can detect failure and keep RECENT.md intact.
+                today = datetime.utcnow().strftime("%Y-%m-%d")
+                journal_path = os.path.join(self.journal_dir, f"{today}.md")
+                header = f"\n\n# === Archived at {datetime.utcnow().isoformat()} ===\n\n"
+                utils.append_with_lock(journal_path, header + content)
+                # Journal write succeeded — safe to clear RECENT.md
+                with open(self.recent_path, "w", encoding="utf-8") as f:
+                    f.write("")
+            except OSError:
+                return "error"
+        return "flushed"
+
+    def purge_journal(self, keep_days: int = 30) -> int:
+        """Delete journal files older than keep_days. Returns count of deleted files."""
+        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+        deleted = 0
+        if not os.path.isdir(self.journal_dir):
+            return 0
+        for name in os.listdir(self.journal_dir):
+            if not name.endswith(".md"):
+                continue
+            date_part = name[:-3]
+            # Skip non-date filenames gracefully
+            if len(date_part) != 10 or date_part[4] != "-" or date_part[7] != "-":
+                continue
+            if date_part < cutoff:
+                try:
+                    os.remove(os.path.join(self.journal_dir, name))
+                    deleted += 1
+                except OSError:
+                    pass
+        return deleted
 
     def rebuild_rag_index(self) -> int:
         """

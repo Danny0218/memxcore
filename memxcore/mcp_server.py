@@ -118,6 +118,8 @@ def remember(
 def search(
     query: str,
     max_results: int = 5,
+    after: Optional[str] = None,
+    before: Optional[str] = None,
     tenant_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -128,9 +130,12 @@ def search(
       2. LLM relevance judgment (if API key set)
       3. Keyword fallback (always available)
 
+    after: ISO date/datetime string — only return facts from this time onwards (inclusive)
+    before: ISO date/datetime string — only return facts up to this time (inclusive)
+
     Returns a list of relevant facts with relevance scores (0–1).
     """
-    results = _get_manager(tenant_id).search(query, max_results=max_results)
+    results = _get_manager(tenant_id).search(query, max_results=max_results, after=after, before=before)
     return [
         {
             "content": r.content,
@@ -158,6 +163,35 @@ def compact(
     """
     _get_manager(tenant_id).compact(force=force)
     return "compaction triggered (runs in background)"
+
+
+@mcp.tool()
+def flush(
+    tenant_id: Optional[str] = None,
+) -> str:
+    """
+    Move RECENT.md content to today's journal file (lossless, no LLM).
+
+    Use when you want to save current session memories to the journal
+    without running LLM distillation. The journal preserves raw entries
+    permanently. Use compact() when you want LLM-distilled archival.
+    """
+    return _get_manager(tenant_id).flush()
+
+
+@mcp.tool()
+def purge_journal(
+    keep_days: int = 30,
+    tenant_id: Optional[str] = None,
+) -> str:
+    """
+    Delete journal files older than keep_days. Does not affect archive.
+
+    Journal files are daily raw memory logs. Old ones can be safely
+    purged after their content has been compacted into archive files.
+    """
+    count = _get_manager(tenant_id).purge_journal(keep_days=keep_days)
+    return f"Purged {count} journal file(s) older than {keep_days} days"
 
 
 @mcp.tool()

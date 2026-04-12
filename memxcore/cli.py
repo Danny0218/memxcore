@@ -6,6 +6,8 @@ Usage:
     python -m memxcore.cli reindex                       # reindex all archive files
     python -m memxcore.cli reindex project_state         # reindex one category
     python -m memxcore.cli compact                       # force distillation
+    python -m memxcore.cli flush                         # move RECENT.md to journal (no LLM)
+    python -m memxcore.cli purge-journal --keep-days 30  # delete old journal files
     python -m memxcore.cli search "query text"           # search memories (debug)
     python -m memxcore.cli --tenant alice search "test"  # multi-tenant
     python -m memxcore.cli benchmark                     # run search precision benchmark
@@ -71,9 +73,26 @@ def cmd_compact(tenant_id: Optional[str] = None) -> None:
     print("Compaction complete")
 
 
-def cmd_search(query: str, tenant_id: Optional[str] = None) -> None:
+def cmd_flush(tenant_id: Optional[str] = None) -> None:
     manager = _get_manager(tenant_id)
-    results = manager.search(query, max_results=5)
+    result = manager.flush()
+    if result == "flushed":
+        print("RECENT.md flushed to journal")
+    elif result == "empty":
+        print("Nothing to flush (RECENT.md is empty)")
+    else:
+        print(f"Flush failed: {result}")
+
+
+def cmd_purge_journal(keep_days: int = 30, tenant_id: Optional[str] = None) -> None:
+    manager = _get_manager(tenant_id)
+    count = manager.purge_journal(keep_days=keep_days)
+    print(f"Purged {count} journal file(s) older than {keep_days} days")
+
+
+def cmd_search(query: str, after: Optional[str] = None, before: Optional[str] = None, tenant_id: Optional[str] = None) -> None:
+    manager = _get_manager(tenant_id)
+    results = manager.search(query, max_results=5, after=after, before=before)
     if not results:
         print("No results found")
         return
@@ -83,6 +102,114 @@ def cmd_search(query: str, tenant_id: Optional[str] = None) -> None:
         cat = r.metadata.get("category", r.source)
         print(f"\n[{i}] score={score} via={method} category={cat}")
         print(f"    {r.content[:200]}")
+
+
+def cmd_timeline(days: int = 7, after: Optional[str] = None, before: Optional[str] = None, tenant_id: Optional[str] = None) -> None:
+    """Show chronological memory timeline from journal and archive files."""
+    from datetime import datetime, timedelta
+    from memxcore.core.rag import _split_archive_sections
+    from memxcore.core.utils import parse_front_matter
+    import re
+
+    manager = _get_manager(tenant_id)
+
+    # Determine date range
+    if not before:
+        before = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    if not after:
+        after = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    entries = []  # [(timestamp, label, content), ...]
+
+    # Journal files use RECENT.md format: "# [TIMESTAMP] Memory" or "# [TIMESTAMP] [category:X] Memory"
+    _journal_entry_re = re.compile(r'^# \[([^\]]+)\]', re.MULTILINE)
+
+    # Read journal/*.md files within the date range
+    if os.path.isdir(manager.journal_dir):
+        for name in sorted(os.listdir(manager.journal_dir)):
+            if not name.endswith(".md"):
+                continue
+            date_part = name[:-3]  # strip .md
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", date_part):
+                if date_part > before[:10]:
+                    continue
+                if date_part < after[:10]:
+                    continue
+
+            path = os.path.join(manager.journal_dir, name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+
+            # Parse journal entries: split by "# [timestamp]" (single #, RECENT.md format)
+            # Skip "# === Archived at ... ===" separator lines
+            parts = _journal_entry_re.split(raw)
+            # parts = [pre-text, ts1, body1, ts2, body2, ...]
+            for i in range(1, len(parts) - 1, 2):
+                ts = parts[i]
+                body = parts[i + 1].strip()
+                # Skip archive separator headers captured as entries
+                if ts.startswith("==="):
+                    continue
+                if not body:
+                    continue
+                _before_padded = before if "T" in before else before + "T23:59:59.999999"
+                if ts >= after and ts <= _before_padded:
+                    preview = body.split("\n")[0].strip()
+                    if len(preview) > 200:
+                        preview = preview[:200] + "..."
+                    entries.append((ts, "[journal]", preview))
+
+    # Read archive/*.md sections within the date range
+    if os.path.isdir(manager.archive_dir):
+        for name in sorted(os.listdir(manager.archive_dir)):
+            if not name.endswith(".md"):
+                continue
+            category = name[:-3]
+            path = os.path.join(manager.archive_dir, name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+            _, body = parse_front_matter(raw)
+            _before_arc = before if "T" in before else before + "T23:59:59.999999"
+            for distilled_at, content in _split_archive_sections(body):
+                if distilled_at >= after and distilled_at <= _before_arc:
+                    preview = content.strip().replace("\n", " ")
+                    if len(preview) > 200:
+                        preview = preview[:200] + "..."
+                    entries.append((distilled_at, f"[archive/{category}]", preview))
+
+    # Read USER.md sections within the date range
+    _before_user = before if "T" in before else before + "T23:59:59.999999"
+    if os.path.isfile(manager.user_path):
+        try:
+            with open(manager.user_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            for distilled_at, content in _split_archive_sections(raw):
+                if distilled_at >= after and distilled_at <= _before_user:
+                    preview = content.strip().replace("\n", " ")
+                    if len(preview) > 200:
+                        preview = preview[:200] + "..."
+                    entries.append((distilled_at, "[user]", preview))
+        except OSError:
+            pass
+
+    # Sort chronologically and print
+    entries.sort(key=lambda e: e[0])
+
+    if not entries:
+        print(f"No entries found between {after[:10]} and {before[:10]}")
+        return
+
+    print(f"Timeline: {after[:10]} to {before[:10]} ({len(entries)} entries)")
+    print("=" * 60)
+    for ts, label, content in entries:
+        print(f"\n{ts}  {label}")
+        print(f"  {content}")
 
 
 def cmd_benchmark(dataset: Optional[str] = None, verbose: bool = False) -> None:
@@ -793,9 +920,29 @@ def main() -> None:
     # compact
     sub.add_parser("compact", help="Force compaction of RECENT.md")
 
+    # flush
+    sub.add_parser("flush", help="Move RECENT.md to journal (no LLM)")
+
+    # purge-journal
+    p_purge = sub.add_parser("purge-journal", help="Delete old journal files")
+    p_purge.add_argument(
+        "--keep-days",
+        type=int,
+        default=30,
+        help="Keep journal files from the last N days (default: 30)",
+    )
+
     # search
     p_search = sub.add_parser("search", help="Search memories (debug)")
     p_search.add_argument("query", help="Search query")
+    p_search.add_argument("--after", default=None, help="Filter results after this date (YYYY-MM-DD or ISO 8601)")
+    p_search.add_argument("--before", default=None, help="Filter results before this date (YYYY-MM-DD or ISO 8601)")
+
+    # timeline
+    p_timeline = sub.add_parser("timeline", help="Show chronological memory timeline")
+    p_timeline.add_argument("--days", type=int, default=7, help="Number of days to look back (default: 7)")
+    p_timeline.add_argument("--after", default=None, help="Start date (YYYY-MM-DD)")
+    p_timeline.add_argument("--before", default=None, help="End date (YYYY-MM-DD)")
 
     # benchmark
     p_bench = sub.add_parser("benchmark", help="Run search precision benchmark")
@@ -844,8 +991,22 @@ def main() -> None:
         cmd_reindex(getattr(args, "category", None), tenant_id=args.tenant)
     elif args.command == "compact":
         cmd_compact(tenant_id=args.tenant)
+    elif args.command == "flush":
+        cmd_flush(tenant_id=args.tenant)
+    elif args.command == "purge-journal":
+        cmd_purge_journal(
+            keep_days=getattr(args, "keep_days", 30),
+            tenant_id=args.tenant,
+        )
     elif args.command == "search":
-        cmd_search(args.query, tenant_id=args.tenant)
+        cmd_search(args.query, after=getattr(args, "after", None), before=getattr(args, "before", None), tenant_id=args.tenant)
+    elif args.command == "timeline":
+        cmd_timeline(
+            days=getattr(args, "days", 7),
+            after=getattr(args, "after", None),
+            before=getattr(args, "before", None),
+            tenant_id=args.tenant,
+        )
     else:
         parser.print_help()
 

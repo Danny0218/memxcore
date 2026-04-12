@@ -143,11 +143,14 @@ class RAGIndex:
         top_k: int = 10,
         category: Optional[str] = None,
         tag_filter: Optional[str] = None,
+        after: Optional[str] = None,
+        before: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Semantic search, returns [{content, category, tags, distilled_at, score}, ...].
         score is in [0, 1]; higher means more relevant (cosine similarity).
         tag_filter: if provided, only search facts whose tags field contains this string ($contains).
+        after/before: ISO 8601 date strings for time-range filtering (inclusive).
         Returns [] when the collection is empty or RAG is unavailable.
         """
         if not self._available:
@@ -164,6 +167,10 @@ class RAGIndex:
                     where_clauses.append({"category": category})
                 if tag_filter:
                     where_clauses.append({"tags": {"$contains": tag_filter}})
+                if after:
+                    where_clauses.append({"distilled_at": {"$gte": after}})
+                if before:
+                    where_clauses.append({"distilled_at": {"$lte": before}})
                 if len(where_clauses) == 1:
                     kwargs["where"] = where_clauses[0]
                 elif len(where_clauses) > 1:
