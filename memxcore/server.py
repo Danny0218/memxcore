@@ -44,6 +44,7 @@ app = FastAPI(title="memxcore")
 class RememberRequest(BaseModel):
     text: str
     level: Optional[int] = None
+    category: Optional[str] = None
 
 
 class MemoryResultModel(BaseModel):
@@ -56,7 +57,7 @@ class MemoryResultModel(BaseModel):
 
 @app.post("/remember")
 def remember(req: RememberRequest, tenant_id: Optional[str] = None) -> dict:
-    path = _get_manager(tenant_id).remember(req.text, req.level)
+    path = _get_manager(tenant_id).remember(req.text, level=req.level, category=req.category)
     return {"status": "ok", "path": path}
 
 

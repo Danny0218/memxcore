@@ -34,12 +34,12 @@ index.json         <- 關鍵字搜索索引
 
 ```bash
 pip install memxcore          # 核心
-pip install 'memxcore[rag]'   # + 語義搜索（推薦）
+pip install 'memxcore[rag,bm25]'   # + 語義搜索（推薦）
 pip install 'memxcore[all]'   # 全部功能
 
 # 或從原始碼安裝：
 git clone https://github.com/Danny0218/memxcore.git
-cd memxcore && pip install '.[rag]'
+cd memxcore && pip install '.[rag,bm25]'
 ```
 
 **檢查安裝：**

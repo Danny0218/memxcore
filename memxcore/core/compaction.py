@@ -1,3 +1,5 @@
+import fcntl
+import logging
 import os
 import re
 import threading
@@ -8,6 +10,8 @@ import yaml
 
 from . import utils
 from .rag import _split_archive_sections
+
+logger = logging.getLogger(__name__)
 
 
 # ── Token estimation ──────────────────────────────────────────────────────────
@@ -128,8 +132,14 @@ def _write_to_user_permanent(manager: "object", content: str, distilled_at: str)
         return
     utils.ensure_file(user_path)
     entry = f"\n\n## [{distilled_at}]\n\n{content.strip()}\n"
-    with open(user_path, "a", encoding="utf-8") as f:
-        f.write(entry)
+    write_lock = getattr(manager, "_write_lock", None)
+    if write_lock:
+        with write_lock:
+            with open(user_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+    else:
+        with open(user_path, "a", encoding="utf-8") as f:
+            f.write(entry)
 
 
 def _maybe_promote(
@@ -170,7 +180,6 @@ def _maybe_promote(
         return
 
     sections = _split_archive_sections(body)
-    promoted = False
 
     for ts, content in sections:
         if _word_overlap(new_content, content) >= similarity_threshold:
@@ -195,7 +204,6 @@ def _maybe_promote(
                         rag.upsert(content, "permanent", tags, distilled_at)
                     except Exception:
                         pass
-                promoted = True
             break
 
     return
@@ -498,6 +506,7 @@ def _run_compaction_job(
             success = True
 
     except Exception:
+        logger.warning("Compaction job failed", exc_info=True)
         success = False
 
     if not success:
@@ -521,7 +530,7 @@ def _run_compaction_job(
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def maybe_compact_recent(manager: "object", force: bool = False) -> None:
+def maybe_compact_recent(manager: "object", force: bool = False) -> "threading.Thread | None":
     """
     Check if RECENT.md has reached the compaction threshold; if so, trigger async compaction
     in the background.
@@ -583,15 +592,42 @@ def maybe_compact_recent(manager: "object", force: bool = False) -> None:
         return
 
     # ── 6. Take snapshot, immediately clear RECENT.md (non-blocking) ──
-    snapshot = recent_content
+    # Hold _write_lock during snapshot+clear to prevent concurrent remember()
+    # from appending between snapshot read and RECENT.md clear (data loss).
+    # Also acquire fcntl file lock to protect against cross-process writers
+    # (e.g. auto_remember hook running in a separate process).
+    write_lock_snap = getattr(manager, "_write_lock", None)
+    _snap_lock_held = False
     snapshot_path = manager.recent_path + ".snapshot"
     try:
-        with open(snapshot_path, "w", encoding="utf-8") as f:
-            f.write(snapshot)
-        _clear_recent(manager)
+        if write_lock_snap:
+            write_lock_snap.acquire()
+            _snap_lock_held = True
+        # Re-read under lock to capture any writes since the initial read
+        # Use fcntl file lock for cross-process safety
+        with open(manager.recent_path, "r+", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                snapshot = f.read()
+                if not snapshot.strip():
+                    lock.release()
+                    return
+                with open(snapshot_path, "w", encoding="utf-8") as sf:
+                    sf.write(snapshot)
+                f.seek(0)
+                f.truncate()
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
     except OSError:
         lock.release()
         return
+    finally:
+        if _snap_lock_held:
+            try:
+                write_lock_snap.release()
+                _snap_lock_held = False
+            except RuntimeError:
+                pass
 
     config = getattr(manager, "config", {}) or {}
 
@@ -603,4 +639,6 @@ def maybe_compact_recent(manager: "object", force: bool = False) -> None:
             lock.release()
 
     thread_name = f"memxcore-compact-{tenant_id or 'default'}"
-    threading.Thread(target=_job, daemon=True, name=thread_name).start()
+    t = threading.Thread(target=_job, daemon=True, name=thread_name)
+    t.start()
+    return t

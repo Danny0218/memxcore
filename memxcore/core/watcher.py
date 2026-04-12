@@ -103,7 +103,7 @@ class ArchiveWatcher:
                 existing.cancel()
             timer = threading.Timer(delay, self._run, args=[path])
             self._timers[path] = timer
-        timer.start()
+            timer.start()
 
     def _run(self, path: str) -> None:
         """Actually execute reindexing (runs in the timer thread)."""
@@ -113,9 +113,21 @@ class ArchiveWatcher:
         if path == "__rebuild__":
             self._manager.rebuild_rag_index()
         else:
+            category = os.path.basename(path)[:-3]  # strip .md
             if os.path.isfile(path):
-                category = os.path.basename(path)[:-3]  # strip .md
                 self._manager.rag.reindex_file(path, category)
+            else:
+                # File was deleted — remove stale vectors for this category
+                try:
+                    rag = self._manager.rag
+                    if rag.available:
+                        with rag._lock:
+                            existing = rag._collection.get(where={"category": category})
+                            if existing["ids"]:
+                                rag._collection.delete(ids=existing["ids"])
+                except Exception:
+                    pass
 
-        # Sync update index.json after each change
+        # Keep BM25 and index.json in sync after each change
+        self._manager.bm25.rebuild(self._manager.archive_dir, self._manager.user_path)
         self._manager.update_index()

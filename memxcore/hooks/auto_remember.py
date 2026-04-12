@@ -14,6 +14,7 @@ Environment variables (optional):
   MEMXCORE_AUTO_REMEMBER (or MEMNEST_* / CLAWDMEMORY_*) - set to "0" to disable
 """
 
+import fcntl
 import json
 import os
 import sys
@@ -44,10 +45,13 @@ MAX_CONTEXT_CHARS = 4000
 
 def _install_dir(ws: str) -> str:
     new_root = os.path.join(ws, "memxcore")
+    memx_root = os.path.join(ws, "memx")
     mid_root = os.path.join(ws, "memnest")
     old_root = os.path.join(ws, "ClawdMemory")
     if os.path.isdir(os.path.join(new_root, "storage")):
         return new_root
+    if os.path.isdir(os.path.join(memx_root, "storage")):
+        return memx_root
     if os.path.isdir(os.path.join(mid_root, "storage")):
         return mid_root
     if os.path.isdir(os.path.join(old_root, "storage")):
@@ -240,7 +244,11 @@ def write_facts(facts: List[Dict[str, str]]) -> int:
         return 0
 
     with open(RECENT_MD, "a", encoding="utf-8") as f:
-        f.writelines(lines)
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.writelines(lines)
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
     return len(lines)
 
@@ -251,6 +259,7 @@ def main() -> None:
     # Kill switch
     _ar = (
         os.environ.get("MEMXCORE_AUTO_REMEMBER")
+        or os.environ.get("MEMX_AUTO_REMEMBER")
         or os.environ.get("MEMNEST_AUTO_REMEMBER")
         or os.environ.get("CLAWDMEMORY_AUTO_REMEMBER")
     )

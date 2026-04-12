@@ -178,12 +178,15 @@ class KnowledgeGraph:
 
     def search(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Fuzzy search across subject / predicate / object."""
-        pattern = f"%{query}%"
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
         conn = self._connect()
         try:
             rows = conn.execute(
                 "SELECT * FROM triples "
-                "WHERE subject LIKE ? OR predicate LIKE ? OR object LIKE ? "
+                "WHERE subject LIKE ? ESCAPE '\\' "
+                "OR predicate LIKE ? ESCAPE '\\' "
+                "OR object LIKE ? ESCAPE '\\' "
                 "ORDER BY created_at DESC LIMIT ?",
                 (pattern, pattern, pattern, limit),
             ).fetchall()

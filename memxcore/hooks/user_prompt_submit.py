@@ -36,12 +36,14 @@ TENANT_ID = (
 )
 SCORE_THRESHOLD = float(
     os.environ.get("MEMXCORE_SCORE_THRESHOLD")
+    or os.environ.get("MEMX_SCORE_THRESHOLD")
     or os.environ.get("MEMNEST_SCORE_THRESHOLD")
     or os.environ.get("CLAWDMEMORY_SCORE_THRESHOLD")
     or "0.20"
 )
 MAX_RESULTS = int(
     os.environ.get("MEMXCORE_MAX_RESULTS")
+    or os.environ.get("MEMX_MAX_RESULTS")
     or os.environ.get("MEMNEST_MAX_RESULTS")
     or os.environ.get("CLAWDMEMORY_MAX_RESULTS")
     or "5"
@@ -51,10 +53,13 @@ MIN_QUERY_LENGTH = 5
 
 def _install_dir(ws: str) -> str:
     new_root = os.path.join(ws, "memxcore")
+    memx_root = os.path.join(ws, "memx")
     mid_root = os.path.join(ws, "memnest")
     old_root = os.path.join(ws, "ClawdMemory")
     if os.path.isdir(os.path.join(new_root, "storage")):
         return new_root
+    if os.path.isdir(os.path.join(memx_root, "storage")):
+        return memx_root
     if os.path.isdir(os.path.join(mid_root, "storage")):
         return mid_root
     if os.path.isdir(os.path.join(old_root, "storage")):
@@ -162,7 +167,7 @@ def _collect_facts():
                 with open(path, "r", encoding="utf-8") as f:
                     raw = f.read()
                 # Skip YAML front matter
-                fm_match = re.match(r"^---\n.*?\n---\n", raw, re.DOTALL)
+                fm_match = re.match(r"^---\n.*?\n---(?:\n|$)", raw, re.DOTALL)
                 body = raw[fm_match.end():] if fm_match else raw
                 for content in _split_sections(body):
                     facts.append((category, content))

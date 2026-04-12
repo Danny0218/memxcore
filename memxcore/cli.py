@@ -60,14 +60,15 @@ def cmd_reindex(category: Optional[str], tenant_id: Optional[str] = None) -> Non
         count = manager.rebuild_rag_index()
         print(f"Reindexed all: {count} facts")
 
+    manager.bm25.rebuild(manager.archive_dir, manager.user_path)
     manager.update_index()
-    print("index.json updated")
+    print("BM25 + index.json updated")
 
 
 def cmd_compact(tenant_id: Optional[str] = None) -> None:
     manager = _get_manager(tenant_id)
-    manager.compact(force=True)
-    print("Compaction triggered (runs in background if LLM strategy)")
+    manager.compact(force=True, blocking=True)
+    print("Compaction complete")
 
 
 def cmd_search(query: str, tenant_id: Optional[str] = None) -> None:
@@ -162,8 +163,19 @@ def cmd_config(args, tenant_id: Optional[str] = None) -> None:
 
     action = getattr(args, "config_action", None)
 
+    # Tenant-specific config path
+    tenant_config_path = None
+    if tenant_id:
+        tenant_config_path = os.path.join(root_dir, "tenants", tenant_id, "config.yaml")
+
     if action == "path":
-        if os.path.isfile(ws_config_path):
+        if tenant_id and tenant_config_path:
+            if os.path.isfile(tenant_config_path):
+                print(f"{tenant_config_path}  (tenant override)")
+            else:
+                print(f"{tenant_config_path}  (not created yet)")
+            print(f"Base: {ws_config_path}")
+        elif os.path.isfile(ws_config_path):
             print(ws_config_path)
         else:
             print(f"{ws_config_path}  (not created yet, using bundled defaults)")
@@ -172,28 +184,27 @@ def cmd_config(args, tenant_id: Optional[str] = None) -> None:
     if action == "set":
         key = args.key
         value = args.value
-        updated = write_config_key(ws_config_path, key, value)
+        if tenant_id:
+            target_path = os.path.join(root_dir, "tenants", tenant_id, "config.yaml")
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        else:
+            target_path = ws_config_path
+        write_config_key(target_path, key, value)
         print(f"Set {key} = {value!r}")
-        print(f"Written to {ws_config_path}")
+        print(f"Written to {target_path}")
         return
 
-    # Default: show
-    config = {}
-    source = "defaults"
-    if os.path.isfile(ws_config_path):
-        try:
-            with open(ws_config_path, "r", encoding="utf-8") as f:
-                config = _yaml.safe_load(f) or {}
-            source = ws_config_path
-        except Exception:
-            pass
+    # Default: show (use MemoryManager's merged config for accurate tenant view)
+    mgr = _get_manager(tenant_id)
+    config = mgr.config
+    if tenant_id and tenant_config_path and os.path.isfile(tenant_config_path):
+        source = f"{ws_config_path} + {tenant_config_path} (merged)"
+    elif os.path.isfile(ws_config_path):
+        source = ws_config_path
     elif os.path.isfile(pkg_config_path):
-        try:
-            with open(pkg_config_path, "r", encoding="utf-8") as f:
-                config = _yaml.safe_load(f) or {}
-            source = f"{pkg_config_path} (bundled)"
-        except Exception:
-            pass
+        source = f"{pkg_config_path} (bundled)"
+    else:
+        source = "defaults"
 
     print(f"# Source: {source}\n")
     print(_yaml.safe_dump(config, allow_unicode=True, default_flow_style=False).strip())
@@ -270,7 +281,7 @@ def cmd_doctor(tenant_id: Optional[str] = None) -> None:
     rag_ok = chromadb_ok and st_ok
     if not rag_ok:
         print("           RAG semantic search disabled. Using keyword fallback.")
-        print("           Fix: pip install 'memxcore[rag]'")
+        print("           Fix: pip install 'memxcore[rag,bm25]'")
     _check_import("rank_bm25", "rank-bm25", "pip install rank-bm25", required=False)
     _check_import("watchdog", "watchdog", "pip install watchdog", required=False)
     _check_import("fastapi", "fastapi", "pip install fastapi", required=False)
@@ -560,18 +571,22 @@ def cmd_setup(dry_run: bool = False, skip_hooks: bool = False, workspace_overrid
 def _write_claude_hooks(settings_path: str, workspace: str, python_path: str, dry_run: bool) -> None:
     """Write auto-remember + auto-compact hooks to Claude Code settings.json."""
     import json
+    import shlex
     import shutil
 
-    env_prefix = f"MEMXCORE_WORKSPACE={workspace}"
+    # Shell-quote paths to handle spaces and special characters
+    q_ws = shlex.quote(workspace)
+    q_py = shlex.quote(python_path)
+    env_prefix = f"MEMXCORE_WORKSPACE={q_ws}"
     hooks_config = {
         "UserPromptSubmit": [{"hooks": [{
             "type": "command",
-            "command": f"{env_prefix} {python_path} -m memxcore.hooks.user_prompt_submit",
+            "command": f"{env_prefix} {q_py} -m memxcore.hooks.user_prompt_submit",
             "timeout": 10,
         }]}],
         "Stop": [{"hooks": [
-            {"type": "command", "command": f"{env_prefix} {python_path} -m memxcore.hooks.auto_remember", "timeout": 30},
-            {"type": "command", "command": f"{env_prefix} {python_path} -m memxcore.cli compact 2>/dev/null || true"},
+            {"type": "command", "command": f"{env_prefix} {q_py} -m memxcore.hooks.auto_remember", "timeout": 30},
+            {"type": "command", "command": f"{env_prefix} {q_py} -m memxcore.cli compact 2>/dev/null || true"},
         ]}],
     }
 

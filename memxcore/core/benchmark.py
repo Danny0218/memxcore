@@ -165,7 +165,7 @@ def _load_memories_direct(mgr: "object", memories: List[Dict]) -> None:
             f"topic: {category}",
             f"tags: []",
             f"last_distilled: '{timestamp}'",
-            "confidence_level: 4",
+            "confidence_level: 1",
             "---",
             "",
         ]
@@ -240,9 +240,10 @@ def format_report(bench_result: Dict[str, Any]) -> str:
         return "\n".join(lines)
 
     # Collect all K values
-    all_ks = sorted(set(
-        k for mode_scores in results.values() for k in mode_scores.keys()
-    ))
+    all_ks = sorted(
+        set(k for mode_scores in results.values() for k in mode_scores.keys()),
+        key=lambda x: int(x.split("@")[1]) if "@" in x else x,
+    )
 
     # Header
     header = f"{'Mode':<12}" + "".join(f"{k:>8}" for k in all_ks)

@@ -1,3 +1,4 @@
+import fcntl
 import json
 import logging
 import os
@@ -45,6 +46,17 @@ def ensure_file(path: str) -> None:
     if not os.path.exists(path):
         with open(path, "w", encoding="utf-8"):
             pass
+
+
+def append_with_lock(path: str, content: str) -> None:
+    """Append content to a file with POSIX file-level locking (fcntl.flock)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.write(content)
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def read_json(path: str) -> Optional[Dict[str, Any]]:
@@ -101,28 +113,68 @@ def write_config_key(config_path: str, key: str, value: str) -> Dict[str, Any]:
     return data
 
 
-def load_config(workspace_path: str, pkg_dir: str) -> Dict[str, Any]:
+def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep merge: overlay keys override base; dict values are merged recursively."""
+    result = base.copy()
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def load_merged_config(
+    root_dir: str,
+    config_path: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Load config from workspace config.yaml, falling back to package bundled one.
-    Returns the merged config dict.
+    Canonical config loader. Handles:
+      1. workspace config.yaml (or explicit config_path)
+      2. package-bundled config.yaml fallback
+      3. tenant-level config override (deep-merged)
+      4. compaction defaults
     """
-    from .paths import resolve_install_dir
-    root_dir = resolve_install_dir(workspace_path)
-    ws_config = os.path.join(root_dir, "config.yaml")
-    if os.path.isfile(ws_config):
+    # 1. Workspace-level config
+    ws_config_path = config_path or os.path.join(root_dir, "config.yaml")
+    if os.path.isfile(ws_config_path):
         try:
-            with open(ws_config, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
+            with open(ws_config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
         except (OSError, yaml.YAMLError):
-            pass
-    pkg_config = os.path.join(pkg_dir, "config.yaml")
-    if os.path.isfile(pkg_config):
-        try:
-            with open(pkg_config, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-        except (OSError, yaml.YAMLError):
-            pass
-    return {}
+            data = {}
+    else:
+        # 2. Fallback to package-bundled config.yaml
+        pkg_config = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml")
+        if os.path.isfile(pkg_config):
+            try:
+                with open(pkg_config, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            except (OSError, yaml.YAMLError):
+                data = {}
+        else:
+            data = {}
+
+    # 3. Tenant-level config override (if exists)
+    if tenant_id and config_path is None:
+        tenant_cfg_path = os.path.join(
+            root_dir, "tenants", tenant_id, "config.yaml"
+        )
+        if os.path.isfile(tenant_cfg_path):
+            try:
+                with open(tenant_cfg_path, "r", encoding="utf-8") as f:
+                    tenant_data = yaml.safe_load(f) or {}
+                data = _deep_merge(data, tenant_data)
+            except (OSError, yaml.YAMLError):
+                pass
+
+    # 4. Compaction defaults
+    compaction = data.get("compaction") or {}
+    compaction.setdefault("threshold_tokens", 2000)
+    compaction.setdefault("strategy", "llm")
+    data["compaction"] = compaction
+    return data
 
 
 def parse_front_matter(raw: str) -> Tuple[Dict[str, Any], str]:

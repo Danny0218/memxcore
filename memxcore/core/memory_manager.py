@@ -306,9 +306,7 @@ class MemoryManager:
             cat_tag = f" [category:{category}]" if category else ""
             header = f"\n\n# [{timestamp}]{cat_tag} Memory\n"
             with self._write_lock:
-                with open(self.recent_path, "a", encoding="utf-8") as f:
-                    f.write(header)
-                    f.write(text.strip() + "\n")
+                utils.append_with_lock(self.recent_path, header + text.strip() + "\n")
             maybe_compact_recent(self)
             return "RECENT.md"
 
@@ -402,17 +400,19 @@ class MemoryManager:
 
         utils.write_json(self.index_path, {"files": files_meta})
 
-    def compact(self, force: bool = False) -> None:
+    def compact(self, force: bool = False, blocking: bool = False) -> None:
         """Explicitly trigger the compaction process."""
-        maybe_compact_recent(self, force=force)
+        thread = maybe_compact_recent(self, force=force)
+        if blocking and thread is not None:
+            thread.join()
 
     def rebuild_rag_index(self) -> int:
         """
-        Rebuild RAG vector index from archive/*.md.
-        Use when index is corrupted or deploying to an environment with existing MD files.
+        Rebuild RAG vector index from archive/*.md and USER.md.
+        Clears the existing collection first to remove stale vectors.
         Returns the number of entries rebuilt.
         """
-        return self.rag.rebuild(self.archive_dir)
+        return self.rag.rebuild(self.archive_dir, user_path=self.user_path)
 
     # -------------------------------------------------
     # Internal utilities
@@ -457,6 +457,7 @@ class MemoryManager:
                 ))
             return results[:5]  # Max 5 KG results
         except Exception:
+            logger.warning("KG search failed", exc_info=True)
             return []
 
     def _rrf_fuse(
@@ -575,9 +576,14 @@ class MemoryManager:
             # Still too many after pre-filter, truncate
             if len(candidates) > LLM_SEARCH_MAX_FACTS:
                 candidates = candidates[:LLM_SEARCH_MAX_FACTS]
-            # Pre-filter results too few (< 5), pad to give LLM more context
-            if len(candidates) < 5:
-                candidates = all_facts[:LLM_SEARCH_MAX_FACTS]
+            # Pre-filter results too few (< 5), pad with non-duplicate facts
+            elif len(candidates) < 5:
+                seen = {id(c) for c in candidates}
+                for f in all_facts:
+                    if id(f) not in seen:
+                        candidates.append(f)
+                        if len(candidates) >= LLM_SEARCH_MAX_FACTS:
+                            break
         else:
             candidates = all_facts
 
@@ -635,23 +641,24 @@ Format: [{{"category": "<category>", "content": "<exact fact text>", "score": <0
         index_data = utils.read_json(self.index_path) or {"files": []}
         indexed_files = index_data.get("files", [])
 
-        candidate_paths: List[str] = []
-        # L2 USER.md always prioritized (independent of index.json)
-        if os.path.isfile(self.user_path):
-            candidate_paths.append(self.user_path)
-
+        # Use index.json to narrow candidates by tag/summary match
+        index_matches: List[str] = []
         for item in indexed_files:
             tags = [str(t).lower() for t in item.get("tags", [])]
             summary = str(item.get("summary", "")).lower()
             if query_lower in summary or any(query_lower in t for t in tags):
-                candidate_paths.append(
+                index_matches.append(
                     os.path.join(self.workspace_path, item.get("path", ""))
                 )
 
-        if candidate_paths:
-            search_targets = candidate_paths
+        if index_matches:
+            # Index narrowed candidates — but always include USER.md
+            search_targets = []
+            if os.path.isfile(self.user_path):
+                search_targets.append(self.user_path)
+            search_targets.extend(index_matches)
         else:
-            # USER.md + archive fallback
+            # No index matches — full scan of USER.md + all archive files
             search_targets = [self.user_path] if os.path.isfile(self.user_path) else []
             search_targets += [
                 os.path.join(self.archive_dir, name)
@@ -698,41 +705,8 @@ Format: [{{"category": "<category>", "content": "<exact fact text>", "score": <0
         return result
 
     def _load_config(self, config_path: Optional[str] = None) -> Dict[str, Any]:
-        # Workspace-level config
-        ws_config_path = config_path or os.path.join(self.root_dir, "config.yaml")
-        if os.path.exists(ws_config_path):
-            try:
-                with open(ws_config_path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            except OSError:
-                data = {}
-        else:
-            # Fallback to package-bundled config.yaml
-            pkg_config = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml")
-            if os.path.exists(pkg_config):
-                try:
-                    with open(pkg_config, "r", encoding="utf-8") as f:
-                        data = yaml.safe_load(f) or {}
-                except OSError:
-                    data = {}
-            else:
-                data = {}
-
-        # Tenant-level config override (if exists)
-        if self.tenant_id and config_path is None:
-            tenant_cfg_path = os.path.join(
-                self.root_dir, "tenants", self.tenant_id, "config.yaml"
-            )
-            if os.path.exists(tenant_cfg_path):
-                try:
-                    with open(tenant_cfg_path, "r", encoding="utf-8") as f:
-                        tenant_data = yaml.safe_load(f) or {}
-                    data = self._deep_merge(data, tenant_data)
-                except OSError:
-                    pass
-
-        compaction = data.get("compaction") or {}
-        compaction.setdefault("threshold_tokens", 2000)
-        compaction.setdefault("strategy", "llm")
-        data["compaction"] = compaction
-        return data
+        return utils.load_merged_config(
+            self.root_dir,
+            config_path=config_path,
+            tenant_id=self.tenant_id,
+        )

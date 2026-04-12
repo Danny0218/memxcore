@@ -34,12 +34,12 @@ index.json         <- Keyword search index (tags + summaries from archive/ front
 
 ```bash
 pip install memxcore          # core
-pip install 'memxcore[rag]'   # + semantic search (recommended)
+pip install 'memxcore[rag,bm25]'   # + hybrid search (recommended)
 pip install 'memxcore[all]'   # everything
 
 # Or from source:
 git clone https://github.com/Danny0218/memxcore.git
-cd memxcore && pip install '.[rag]'
+cd memxcore && pip install '.[rag,bm25]'
 ```
 
 **Check your setup:**
@@ -110,7 +110,7 @@ llm:
   # base_url:                       # Optional: custom API endpoint (gateway/proxy)
 
 rag:
-  embedding_model: all-MiniLM-L6-v2  # sentence-transformers model (80MB, CPU-friendly)
+  embedding_model: paraphrase-multilingual-MiniLM-L12-v2  # multilingual (Chinese↔English cross-lingual)
   top_k: 10                           # Max results from semantic search
   rrf_k: 60                           # Reciprocal Rank Fusion constant
 
@@ -307,7 +307,7 @@ Run `memxcore doctor` first — it checks everything and tells you what to fix.
 
 **RAG not working**
 ```bash
-pip install 'memxcore[rag]'
+pip install 'memxcore[rag,bm25]'
 # First run downloads the embedding model (~80MB) + torch (~500MB)
 ```
 

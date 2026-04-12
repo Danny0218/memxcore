@@ -18,7 +18,7 @@ def resolve_workspace(fallback: str) -> str:
 
     Resolution order:
       1. MEMXCORE_WORKSPACE env var (preferred for pip-installed usage)
-      2. MEMNEST_WORKSPACE / CLAWDMEMORY_WORKSPACE (legacy compat)
+      2. MEMX_WORKSPACE / MEMNEST_WORKSPACE / CLAWDMEMORY_WORKSPACE (legacy compat)
       3. *fallback* — typically computed from __file__ by the caller
     """
     ws = (

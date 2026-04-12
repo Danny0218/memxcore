@@ -9,12 +9,15 @@ Design principles:
 """
 
 import hashlib
+import logging
 import os
 import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import utils
+
+logger = logging.getLogger(__name__)
 
 
 # ── Fact ID ────────────────────────────────────────────────────────────────────
@@ -132,7 +135,7 @@ class RAGIndex:
                     }],
                 )
         except Exception:
-            pass
+            logger.warning("RAG upsert failed", exc_info=True)
 
     def search(
         self,
@@ -180,6 +183,7 @@ class RAGIndex:
                 })
             return out
         except Exception:
+            logger.warning("RAG search failed", exc_info=True)
             return []
 
     def reindex_file(self, archive_path: str, category: str) -> int:
@@ -199,7 +203,7 @@ class RAGIndex:
                 if existing["ids"]:
                     self._collection.delete(ids=existing["ids"])
         except Exception:
-            pass
+            logger.warning("RAG reindex_file: failed to delete old vectors for %s", category, exc_info=True)
 
         # Parse and re-embed current file content
         try:
@@ -208,22 +212,47 @@ class RAGIndex:
         except OSError:
             return 0
 
-        _, body = utils.parse_front_matter(raw)
+        front_matter, body = utils.parse_front_matter(raw)
+        file_tags = front_matter.get("tags", []) if front_matter else []
         count = 0
         for distilled_at, content in _split_archive_sections(body):
             if content.strip():
-                self.upsert(content.strip(), category, [], distilled_at)
+                self.upsert(content.strip(), category, file_tags, distilled_at)
                 count += 1
         return count
 
-    def rebuild(self, archive_dir: str) -> int:
+    def rebuild(self, archive_dir: str, user_path: Optional[str] = None) -> int:
         """
-        Scan archive/*.md and re-embed all distilled facts into ChromaDB.
-        Returns the number of successfully written entries. Use this to rebuild a corrupted index.
+        Clear the entire collection and re-embed all distilled facts from
+        archive/*.md and USER.md into ChromaDB.
+        Returns the number of successfully written entries.
         """
         if not self._available:
             return 0
+
+        # Clear existing collection to remove stale vectors from deleted/renamed files
+        try:
+            with self._lock:
+                existing = self._collection.get()
+                if existing["ids"]:
+                    self._collection.delete(ids=existing["ids"])
+        except Exception:
+            logger.warning("RAG rebuild: failed to clear existing collection", exc_info=True)
+
         count = 0
+
+        # Re-embed USER.md (L2 permanent memories)
+        if user_path and os.path.isfile(user_path):
+            try:
+                with open(user_path, "r", encoding="utf-8") as f:
+                    raw = f.read()
+                for distilled_at, content in _split_archive_sections(raw):
+                    if content.strip():
+                        self.upsert(content.strip(), "permanent", [], distilled_at)
+                        count += 1
+            except OSError:
+                pass
+
         for name in sorted(os.listdir(archive_dir)):
             if not name.endswith(".md"):
                 continue
@@ -234,8 +263,10 @@ class RAGIndex:
                     raw = f.read()
             except OSError:
                 continue
-            _, body = utils.parse_front_matter(raw)
+            front_matter, body = utils.parse_front_matter(raw)
+            file_tags = front_matter.get("tags", []) if front_matter else []
             for distilled_at, content in _split_archive_sections(body):
-                self.upsert(content, category, [], distilled_at)
-                count += 1
+                if content.strip():
+                    self.upsert(content.strip(), category, file_tags, distilled_at)
+                    count += 1
         return count

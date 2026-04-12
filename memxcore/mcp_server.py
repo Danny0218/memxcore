@@ -181,12 +181,12 @@ def reindex(
         if not os.path.isfile(path):
             return f"File not found: archive/{category}.md"
         count = mgr.rag.reindex_file(path, category)
-        mgr.update_index()
-        return f"Reindexed '{category}': {count} facts"
     else:
         count = mgr.rebuild_rag_index()
-        mgr.update_index()
-        return f"Reindexed all: {count} facts"
+    # Keep BM25 and index.json in sync with RAG
+    mgr.bm25.rebuild(mgr.archive_dir, mgr.user_path)
+    mgr.update_index()
+    return f"Reindexed {'all' if not category else repr(category)}: {count} facts"
 
 
 @mcp.tool()
@@ -209,7 +209,11 @@ def set_config(
     from memxcore.core.paths import resolve_install_dir
     ws = _default_workspace()
     root_dir = resolve_install_dir(ws)
-    config_path = os.path.join(root_dir, "config.yaml")
+    if tenant_id:
+        config_path = os.path.join(root_dir, "tenants", tenant_id, "config.yaml")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    else:
+        config_path = os.path.join(root_dir, "config.yaml")
     write_config_key(config_path, key, value)
     # Reload manager config so changes take effect immediately
     mgr = _get_manager(tenant_id)
