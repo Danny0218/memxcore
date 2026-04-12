@@ -2,11 +2,11 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/memxcore)](https://pypi.org/project/memxcore/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/Danny0218/memxcore/blob/main/memxcore/LICENSE)
 
 **The memory layer that learns how you work.**
 
-**English** | [中文](README.zh-CN.md)
+**English** | [中文](https://github.com/Danny0218/memxcore/blob/main/memxcore/README.zh-CN.md)
 
 Your AI remembers without being told. It picks up your preferences, habits, and past decisions from natural conversation — no manual setup needed. Works across Claude Code, Cursor, Windsurf, Gemini CLI, and any MCP-compatible tool.
 
@@ -393,4 +393,4 @@ memxcore config show     # verify configuration
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/Danny0218/memxcore/blob/main/memxcore/LICENSE).

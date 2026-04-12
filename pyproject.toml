@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memxcore"
-version = "0.2.1"
+version = "0.2.2"
 description = "Persistent memory system for AI coding assistants"
-readme = "README.md"
+readme = "memxcore/README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [

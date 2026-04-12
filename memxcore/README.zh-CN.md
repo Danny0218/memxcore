@@ -2,13 +2,13 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/memxcore)](https://pypi.org/project/memxcore/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/Danny0218/memxcore/blob/main/memxcore/LICENSE)
 
 **懂你工作方式的 AI 記憶層。**
 
 你的 AI 不需要被教就能記住。它會從自然對話中學習你的偏好、習慣和過去的決策 — 不需要任何手動設定。支援 Claude Code、Cursor、Windsurf、Gemini CLI 及任何 MCP 相容工具。
 
-[English](README.md) | **中文**
+[English](https://github.com/Danny0218/memxcore/blob/main/memxcore/README.md) | **中文**
 
 ---
 
@@ -393,4 +393,4 @@ memxcore config show     # 驗證配置
 
 ## 授權
 
-MIT。見 [LICENSE](LICENSE)。
+MIT。見 [LICENSE](https://github.com/Danny0218/memxcore/blob/main/memxcore/LICENSE)。
