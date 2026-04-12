@@ -6,13 +6,9 @@ compaction:
   stale_minutes: 10        # Auto-compact on search() if RECENT.md older than this
 
 llm:
-  # model: anthropic/claude-sonnet   # ← uncomment & change to your provider
-  #   provider/model examples (litellm format):
-  #   anthropic/claude-sonnet, openai/gpt-4o, gemini/gemini-2.5-flash, ollama/llama3
-  # api_key_env: ANTHROPIC_API_KEY   # ← env var name for your provider's API key
-  #   litellm auto-detects: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
-  #   Ollama needs no key — just set model: ollama/llama3
-  # base_url:                        # Optional: custom API endpoint (gateway/proxy)
+  model: anthropic/claude-haiku-4-5-20251001  # fast + cheap for distillation
+  api_key_env: ANTHROPIC_AUTH_TOKEN  # env var name for API key
+  base_url: https://ai-gateway.infraway.co  # company gateway
 
 rag:
   embedding_model: paraphrase-multilingual-MiniLM-L12-v2  # multilingual; Chinese↔English cross-lingual

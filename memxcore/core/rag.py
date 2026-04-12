@@ -167,10 +167,8 @@ class RAGIndex:
                     where_clauses.append({"category": category})
                 if tag_filter:
                     where_clauses.append({"tags": {"$contains": tag_filter}})
-                if after:
-                    where_clauses.append({"distilled_at": {"$gte": after}})
-                if before:
-                    where_clauses.append({"distilled_at": {"$lte": before}})
+                # Note: ChromaDB $gte/$lte only works on int/float, not strings.
+                # Time filtering is applied post-query below.
                 if len(where_clauses) == 1:
                     kwargs["where"] = where_clauses[0]
                 elif len(where_clauses) > 1:
@@ -181,11 +179,19 @@ class RAGIndex:
             for i, doc in enumerate(results["documents"][0]):
                 meta = results["metadatas"][0][i]
                 distance = results["distances"][0][i]
+                ts = meta.get("distilled_at", "")
+                # Post-query time filtering (ChromaDB $gte/$lte doesn't support strings)
+                if after and ts and ts < after:
+                    continue
+                if before:
+                    b = before if "T" in before else before + "T23:59:59.999999"
+                    if ts and ts > b:
+                        continue
                 out.append({
                     "content": doc,
                     "category": meta.get("category", ""),
                     "tags": [t for t in meta.get("tags", "").split(",") if t],
-                    "distilled_at": meta.get("distilled_at", ""),
+                    "distilled_at": ts,
                     "score": round(1.0 - distance, 4),
                 })
             return out
