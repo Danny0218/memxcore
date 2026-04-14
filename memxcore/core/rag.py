@@ -8,42 +8,15 @@ Design principles:
 - Uses an internal lock to protect ChromaDB concurrent reads/writes (compaction background thread vs main thread search)
 """
 
-import hashlib
 import logging
 import os
-import re
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from . import utils
+from .parsers import _fact_id, _split_archive_sections  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-
-# ── Fact ID ────────────────────────────────────────────────────────────────────
-
-def _fact_id(category: str, content: str) -> str:
-    """Generate a stable ID from category + content, used for upsert deduplication."""
-    h = hashlib.md5(content.strip().encode("utf-8")).hexdigest()[:12]
-    return f"{category}_{h}"
-
-
-# ── Archive section parser ─────────────────────────────────────────────────────
-
-def _split_archive_sections(body: str) -> List[Tuple[str, str]]:
-    """
-    Split the body of archive/*.md files by '## [timestamp]' sections.
-    Returns [(distilled_at, content), ...]
-    """
-    parts = re.split(r'^## \[([^\]]+)\]', body, flags=re.MULTILINE)
-    # parts = [pre-text, ts1, body1, ts2, body2, ...]
-    result = []
-    for i in range(1, len(parts) - 1, 2):
-        distilled_at = parts[i]
-        content = parts[i + 1].strip()
-        if content:
-            result.append((distilled_at, content))
-    return result
 
 
 # ── RAGIndex ───────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 memxcore - Stop hook: auto-remember
 
 Fires after every Claude response. Reads the transcript, extracts the last
-user+assistant exchange, and calls LLM to extract memorable facts.
+N user+assistant exchanges, and calls LLM to extract memorable facts.
 
 Input (stdin):  JSON  { "transcript_path": "/path/to/session.jsonl", ... }
 Output (stdout): ignored (this is an async-compatible hook)
@@ -19,7 +19,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 # -- Config --------------------------------------------------------------------
 
@@ -38,9 +38,11 @@ TENANT_ID = (
     or os.environ.get("CLAWDMEMORY_TENANT_ID", None)
 )
 
-MIN_USER_CHARS = 20
-MIN_EXCHANGE_CHARS = 100
+MIN_USER_CHARS = 6
+MIN_EXCHANGE_CHARS = 50
 MAX_CONTEXT_CHARS = 4000
+MAX_PRIOR_CONTEXT_CHARS = 2000
+NUM_EXCHANGES = 3
 
 
 def _install_dir(ws: str) -> str:
@@ -71,7 +73,7 @@ CONFIG_PATH = os.path.join(_INSTALL, "config.yaml")
 
 # -- Transcript parsing --------------------------------------------------------
 
-def _read_last_lines(path: str, max_lines: int = 200) -> List[str]:
+def _read_last_lines(path: str, max_lines: int = 500) -> List[str]:
     """Read last N lines of a file efficiently."""
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -94,14 +96,14 @@ def _extract_text(content: Any) -> str:
     return ""
 
 
-def parse_last_exchange(transcript_path: str) -> Optional[Tuple[str, str]]:
+def parse_last_exchanges(transcript_path: str, n: int = NUM_EXCHANGES) -> List[Tuple[str, str]]:
     """
-    Parse transcript .jsonl and extract the last user prompt + assistant text response.
-    Returns (user_text, assistant_text) or None if not found.
+    Parse transcript .jsonl and extract the last N user+assistant exchanges.
+    Returns list of (user_text, assistant_text) in chronological order, or [].
     """
     lines = _read_last_lines(transcript_path)
     if not lines:
-        return None
+        return []
 
     messages: List[Dict[str, Any]] = []
     for line in lines:
@@ -117,52 +119,74 @@ def parse_last_exchange(transcript_path: str) -> Optional[Tuple[str, str]]:
             messages.append(obj)
 
     if not messages:
-        return None
+        return []
 
-    # Find last assistant message with text content
-    last_assistant = None
+    exchanges: List[Tuple[str, str]] = []
+    seen_uuids: set = set()
+
     for msg in reversed(messages):
-        if msg.get("type") == "assistant":
-            text = _extract_text(msg.get("message", {}).get("content", []))
-            if text.strip():
-                last_assistant = msg
-                break
+        if len(exchanges) >= n:
+            break
+        if msg.get("type") != "assistant":
+            continue
 
-    if not last_assistant:
-        return None
+        assistant_text = _extract_text(msg.get("message", {}).get("content", []))
+        if not assistant_text.strip():
+            continue
 
-    # Find the user message it responds to (via parentUuid)
-    parent_uuid = last_assistant.get("parentUuid")
-    last_user = None
-    if parent_uuid:
-        for msg in reversed(messages):
-            if msg.get("type") == "user" and msg.get("uuid") == parent_uuid:
-                last_user = msg
-                break
+        msg_uuid = msg.get("uuid")
+        if msg_uuid and msg_uuid in seen_uuids:
+            continue
+        if msg_uuid:
+            seen_uuids.add(msg_uuid)
 
-    # Fallback: last user message before the assistant
-    if not last_user:
-        assistant_idx = messages.index(last_assistant)
-        for i in range(assistant_idx - 1, -1, -1):
-            if messages[i].get("type") == "user":
-                last_user = messages[i]
-                break
+        # Find the user message it responds to (via parentUuid)
+        parent_uuid = msg.get("parentUuid")
+        user_msg = None
+        if parent_uuid:
+            for m in reversed(messages):
+                if m.get("type") == "user" and m.get("uuid") == parent_uuid:
+                    user_msg = m
+                    break
 
-    if not last_user:
-        return None
+        # Fallback: last user message before this assistant
+        if not user_msg:
+            idx = messages.index(msg)
+            for i in range(idx - 1, -1, -1):
+                if messages[i].get("type") == "user":
+                    user_msg = messages[i]
+                    break
 
-    user_text = _extract_text(last_user.get("message", {}).get("content", ""))
-    assistant_text = _extract_text(last_assistant.get("message", {}).get("content", []))
+        if not user_msg:
+            continue
 
-    return (user_text, assistant_text)
+        user_text = _extract_text(user_msg.get("message", {}).get("content", ""))
+        exchanges.append((user_text, assistant_text))
+
+    # Return in chronological order
+    exchanges.reverse()
+    return exchanges
 
 
 # -- LLM extraction ------------------------------------------------------------
 
-def _build_extract_prompt(user_text: str, assistant_text: str) -> str:
+def _build_extract_prompt(exchanges: List[Tuple[str, str]]) -> str:
+    n = len(exchanges)
+    exchange_text = ""
+    for i, (user_text, assistant_text) in enumerate(exchanges, 1):
+        # Give more context budget to the latest exchange
+        if i == n:
+            max_chars = MAX_CONTEXT_CHARS
+        else:
+            max_chars = MAX_PRIOR_CONTEXT_CHARS
+        exchange_text += f"\n--- Exchange {i}/{n} ---\n"
+        exchange_text += f"User: {user_text[:max_chars]}\n\n"
+        exchange_text += f"Assistant: {assistant_text[:max_chars]}\n"
+
     return (
-        "You are a memory extraction assistant. Given a user-assistant exchange, "
-        "extract facts worth remembering for future sessions.\n\n"
+        "You are a memory extraction assistant. Given recent user-assistant exchanges, "
+        "extract facts worth remembering for future sessions. "
+        "Earlier exchanges provide context; focus extraction on the latest exchange.\n\n"
         "EXTRACT these types of facts:\n"
         "- User corrections or feedback on the assistant's approach\n"
         "- User preferences or working style\n"
@@ -177,10 +201,8 @@ def _build_extract_prompt(user_text: str, assistant_text: str) -> str:
         "- Trivial acknowledgments or greetings\n\n"
         'Return ONLY a JSON array: [{"content": "<fact>", "category": "<cat>"}]\n'
         "Categories: user_model, domain, project_state, episodic, references\n"
-        "Return [] if nothing is worth remembering.\n\n"
-        "--- Exchange ---\n"
-        f"User: {user_text}\n\n"
-        f"Assistant: {assistant_text}"
+        "Return [] if nothing is worth remembering.\n"
+        f"{exchange_text}"
     )
 
 
@@ -195,13 +217,9 @@ def _load_config() -> Dict[str, Any]:
         return {}
 
 
-def extract_facts(user_text: str, assistant_text: str, config: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Call LLM to extract memorable facts from an exchange."""
-    # Truncate to avoid blowing up the LLM context
-    user_text = user_text[:MAX_CONTEXT_CHARS]
-    assistant_text = assistant_text[:MAX_CONTEXT_CHARS]
-
-    prompt = _build_extract_prompt(user_text, assistant_text)
+def extract_facts(exchanges: List[Tuple[str, str]], config: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Call LLM to extract memorable facts from recent exchanges."""
+    prompt = _build_extract_prompt(exchanges)
 
     # Import via package path (workspace = parent of memxcore/)
     sys.path.insert(0, WORKSPACE)
@@ -275,20 +293,19 @@ def main() -> None:
     if not transcript_path or not os.path.isfile(transcript_path):
         return
 
-    exchange = parse_last_exchange(transcript_path)
-    if not exchange:
+    exchanges = parse_last_exchanges(transcript_path)
+    if not exchanges:
         return
 
-    user_text, assistant_text = exchange
-
-    # Pre-filter: skip trivially short exchanges
-    if len(user_text) < MIN_USER_CHARS:
+    # Pre-filter on the latest exchange
+    latest_user, latest_assistant = exchanges[-1]
+    if len(latest_user) < MIN_USER_CHARS:
         return
-    if len(user_text) + len(assistant_text) < MIN_EXCHANGE_CHARS:
+    if len(latest_user) + len(latest_assistant) < MIN_EXCHANGE_CHARS:
         return
 
     config = _load_config()
-    facts = extract_facts(user_text, assistant_text, config)
+    facts = extract_facts(exchanges, config)
     write_facts(facts)
 
 

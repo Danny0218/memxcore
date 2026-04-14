@@ -14,7 +14,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from . import utils
-from .rag import _split_archive_sections
+from .parsers import _split_archive_sections
 
 
 # ── Tokenizer ─────────────────────────────────────────────────────────────────
@@ -37,12 +37,18 @@ def _tokenize(text: str) -> List[str]:
     """
     Mixed CJK/English tokenization:
     - CJK characters are split individually (each character becomes one token)
+    - CJK bigrams are added for compound term matching (e.g. "搜索" = "搜"+"索"+"搜索")
     - English/numeric text is split by word boundaries, all lowercased
     """
     tokens: List[str] = []
+    cjk_chars: List[str] = []
     for ch in text:
         if _is_cjk(ch):
             tokens.append(ch)
+            cjk_chars.append(ch)
+    # Add CJK bigrams for compound terms
+    for i in range(len(cjk_chars) - 1):
+        tokens.append(cjk_chars[i] + cjk_chars[i + 1])
     tokens.extend(re.findall(r"[a-z0-9][-a-z0-9_.]*[a-z0-9]|[a-z0-9]+", text.lower()))
     return tokens
 
