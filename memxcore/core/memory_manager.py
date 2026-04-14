@@ -213,12 +213,14 @@ class MemoryManager:
                         f.write(snapshot_content + existing)
                 os.remove(snapshot_path)
 
-            # Step 2: RECENT.md non-empty -> force compact
+            # Step 2: RECENT.md non-empty -> force compact (blocking to ensure
+            # distillation completes before __init__ returns — otherwise a CLI
+            # process may exit and kill the daemon thread mid-distill)
             if os.path.isfile(self.recent_path):
                 with open(self.recent_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 if content.strip():
-                    self.compact(force=True)
+                    self.compact(force=True, blocking=True)
         except Exception:
             pass  # Never crash __init__
 
