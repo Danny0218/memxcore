@@ -27,6 +27,11 @@ from .watcher import ArchiveWatcher
 
 # Ticket IDs: PROJ-123, TRNSCN-3078
 _TICKET_RE = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
+# RECENT.md entry header: # [timestamp][category:xxx] Memory  or  # [timestamp] Memory
+_RECENT_ENTRY_RE = re.compile(
+    r"^# \[([^\]]+)\](?:\s*\[category:([^\]]*)\])?\s*Memory\s*$",
+    re.MULTILINE,
+)
 # Capitalized proper nouns (2+ chars, not at sentence start heuristic)
 _PROPER_NOUN_RE = re.compile(r"(?<!\.\s)\b[A-Z][a-z]{1,20}\b")
 # Tech terms often written in PascalCase or camelCase
@@ -343,15 +348,22 @@ class MemoryManager:
         before: Optional[str] = None,
     ) -> List[MemoryResult]:
         """
-        Three-tier search:
+        Three-tier search with RECENT.md overlay:
+        0. RECENT.md in-memory scan (case-insensitive, always runs)
         1. Hybrid search (RAG + BM25, RRF fusion) -- with tag-based boosting
         2. LLM relevance judgment -- when hybrid is unavailable or returns no results
         3. Keyword fallback -- last resort
+
+        RECENT.md results are merged into whichever tier produces results,
+        deduplicated by content, and sorted by relevance_score.
 
         after/before: ISO 8601 date strings for time-range filtering (inclusive).
         """
         # ── 0. Stale RECENT.md check (defensive) ────────────────────────
         self._maybe_compact_stale()
+
+        # ── 0b. RECENT.md in-memory scan ────────────────────────────────
+        recent_hits = self._search_recent(query, max_results, after, before)
 
         # ── 1. Hybrid search (RAG + BM25, RRF fusion + Tag boost) ──────
         top_k = self.config.get("rag", {}).get("top_k", max_results)
@@ -397,19 +409,43 @@ class MemoryManager:
                     for kr in kg_results:
                         if kr.content not in seen:
                             fused.append(kr)
+                # Merge RECENT.md hits (deduplicated by content)
+                fused = self._merge_recent(fused, recent_hits)
                 return fused[:max_results]
 
         # ── 2. LLM relevance judgment ─────────────────────────────────
         llm_results = self._llm_search(query, max_results)
         if llm_results:
-            return llm_results
+            return self._merge_recent(llm_results, recent_hits)[:max_results]
 
         # ── 3. Keyword fallback ────────────────────────────────────────
         kw_results = self._keyword_search(query, max_results)
         # KG results may still have value even when keyword search has no results
         if kg_results and not kw_results:
-            return kg_results
-        return kw_results
+            return self._merge_recent(kg_results, recent_hits)[:max_results]
+
+        # If only RECENT.md has results, return those
+        if recent_hits and not kw_results:
+            return recent_hits[:max_results]
+        return self._merge_recent(kw_results, recent_hits)[:max_results]
+
+    @staticmethod
+    def _merge_recent(
+        primary: List["MemoryResult"],
+        recent: List["MemoryResult"],
+    ) -> List["MemoryResult"]:
+        """Merge RECENT.md results into primary results, deduplicated by content."""
+        if not recent:
+            return primary
+        seen = {r.content for r in primary}
+        merged = list(primary)
+        for r in recent:
+            if r.content not in seen:
+                merged.append(r)
+                seen.add(r.content)
+        # Sort by relevance_score descending
+        merged.sort(key=lambda r: r.relevance_score, reverse=True)
+        return merged
 
     def update_index(self) -> None:
         """Rebuild index.json (scan archive/*.md, parse YAML front matter)."""
@@ -788,6 +824,73 @@ Format: [{{"category": "<category>", "content": "<exact fact text>", "score": <0
                 metadata={"path": rel_path, "search": "keyword"},
             ))
 
+            if len(results) >= max_results:
+                break
+
+        return results
+
+    def _search_recent(
+        self,
+        query: str,
+        max_results: int,
+        after: Optional[str] = None,
+        before: Optional[str] = None,
+    ) -> List[MemoryResult]:
+        """Search RECENT.md entries via case-insensitive in-memory matching.
+
+        Parses RECENT.md into individual entries, matches query tokens
+        against each entry, and returns results tagged with source="recent".
+        """
+        if not os.path.isfile(self.recent_path):
+            return []
+        try:
+            with open(self.recent_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+        except OSError:
+            return []
+        if not raw.strip():
+            return []
+
+        # Split into entries by header pattern
+        parts = _RECENT_ENTRY_RE.split(raw)
+        # parts = [pre-text, ts1, cat1_or_None, body1, ts2, cat2_or_None, body2, ...]
+        entries: List[Tuple[str, Optional[str], str]] = []
+        for i in range(1, len(parts) - 2, 3):
+            ts = parts[i]
+            cat = parts[i + 1] if parts[i + 1] else None
+            body = parts[i + 2].strip()
+            if body:
+                entries.append((ts, cat, body))
+
+        if not entries:
+            return []
+
+        query_lower = query.lower()
+        # Split query into tokens for flexible matching
+        tokens = [t for t in query_lower.split() if len(t) >= 2]
+
+        results: List[MemoryResult] = []
+        for ts, cat, body in entries:
+            # Time-range filtering
+            if not _in_time_range(ts, after, before):
+                continue
+
+            body_lower = body.lower()
+            # Match if full query OR any token is found
+            if query_lower not in body_lower and not any(t in body_lower for t in tokens):
+                continue
+
+            results.append(MemoryResult(
+                content=body,
+                source="recent",
+                level=0,
+                relevance_score=0.75,
+                metadata={
+                    "category": cat or "unknown",
+                    "timestamp": ts,
+                    "search": "recent",
+                },
+            ))
             if len(results) >= max_results:
                 break
 

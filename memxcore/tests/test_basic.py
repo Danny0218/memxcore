@@ -221,6 +221,47 @@ class TestMemoryManager:
         results = manager.search("nonexistent_query_12345")
         assert results == []
 
+    def test_search_recent_basic(self, manager):
+        """RECENT.md entries should be found by search before compact."""
+        manager.remember("PayGate project completed P0 optimization")
+        results = manager.search("paygate")
+        assert any("PayGate" in r.content for r in results)
+        assert any(r.source == "recent" for r in results)
+
+    def test_search_recent_case_insensitive(self, manager):
+        """Search should match RECENT.md entries regardless of case."""
+        manager.remember("Redis was chosen for session storage")
+        # Query in different case than stored text
+        results = manager.search("REDIS")
+        assert any("Redis" in r.content for r in results)
+        results2 = manager.search("redis")
+        assert any("Redis" in r.content for r in results2)
+
+    def test_search_recent_metadata(self, manager):
+        """RECENT.md results should have correct source and metadata."""
+        manager.remember("test memory entry", category="project_state")
+        results = manager.search("test memory entry")
+        recent_results = [r for r in results if r.source == "recent"]
+        assert recent_results
+        r = recent_results[0]
+        assert r.level == 0
+        assert r.relevance_score == 0.75
+        assert r.metadata["search"] == "recent"
+        assert r.metadata["category"] == "project_state"
+
+    def test_search_recent_no_match(self, manager):
+        """RECENT.md search should not return non-matching entries."""
+        manager.remember("alpha beta gamma")
+        results = manager.search("zzz_no_match_zzz")
+        recent_results = [r for r in results if r.source == "recent"]
+        assert recent_results == []
+
+    def test_search_recent_token_match(self, manager):
+        """Search should match on individual query tokens."""
+        manager.remember("Slack bot framework evaluation completed")
+        results = manager.search("slack evaluation")
+        assert any("Slack" in r.content for r in results)
+
     def test_update_index(self, manager):
         # Write a fake archive file
         archive_path = os.path.join(manager.archive_dir, "test_cat.md")
@@ -468,7 +509,7 @@ class TestAutoRememberTranscript:
         return path
 
     def test_parse_basic_exchange(self, tmp_path):
-        from memxcore.hooks.auto_remember import parse_last_exchange
+        from memxcore.hooks.auto_remember import parse_last_exchanges
         path = self._write_transcript(tmp_path, [
             {
                 "type": "user",
@@ -486,14 +527,14 @@ class TestAutoRememberTranscript:
                 },
             },
         ])
-        result = parse_last_exchange(path)
-        assert result is not None
-        user_text, assistant_text = result
+        result = parse_last_exchanges(path)
+        assert len(result) == 1
+        user_text, assistant_text = result[0]
         assert "Python" in user_text
         assert "programming language" in assistant_text
 
     def test_parse_content_blocks(self, tmp_path):
-        from memxcore.hooks.auto_remember import parse_last_exchange
+        from memxcore.hooks.auto_remember import parse_last_exchanges
         path = self._write_transcript(tmp_path, [
             {
                 "type": "user",
@@ -515,20 +556,20 @@ class TestAutoRememberTranscript:
                 },
             },
         ])
-        result = parse_last_exchange(path)
-        assert result is not None
-        _, assistant_text = result
+        result = parse_last_exchanges(path)
+        assert len(result) == 1
+        _, assistant_text = result[0]
         assert "Part one" in assistant_text
         assert "Part two" in assistant_text
         assert "tool_use" not in assistant_text
 
     def test_parse_empty_transcript(self, tmp_path):
-        from memxcore.hooks.auto_remember import parse_last_exchange
+        from memxcore.hooks.auto_remember import parse_last_exchanges
         path = self._write_transcript(tmp_path, [])
-        assert parse_last_exchange(path) is None
+        assert parse_last_exchanges(path) == []
 
     def test_parse_no_assistant(self, tmp_path):
-        from memxcore.hooks.auto_remember import parse_last_exchange
+        from memxcore.hooks.auto_remember import parse_last_exchanges
         path = self._write_transcript(tmp_path, [
             {
                 "type": "user",
@@ -537,14 +578,14 @@ class TestAutoRememberTranscript:
                 "message": {"role": "user", "content": "Hello"},
             },
         ])
-        assert parse_last_exchange(path) is None
+        assert parse_last_exchanges(path) == []
 
     def test_parse_nonexistent_file(self):
-        from memxcore.hooks.auto_remember import parse_last_exchange
-        assert parse_last_exchange("/nonexistent/path.jsonl") is None
+        from memxcore.hooks.auto_remember import parse_last_exchanges
+        assert parse_last_exchanges("/nonexistent/path.jsonl") == []
 
     def test_parse_skips_metadata_lines(self, tmp_path):
-        from memxcore.hooks.auto_remember import parse_last_exchange
+        from memxcore.hooks.auto_remember import parse_last_exchanges
         path = self._write_transcript(tmp_path, [
             {"type": "file-history-snapshot", "snapshot": {}},
             {
@@ -564,9 +605,9 @@ class TestAutoRememberTranscript:
             },
             {"type": "last-prompt", "lastPrompt": "Real question here"},
         ])
-        result = parse_last_exchange(path)
-        assert result is not None
-        assert "Real question" in result[0]
+        result = parse_last_exchanges(path)
+        assert len(result) == 1
+        assert "Real question" in result[0][0]
 
 
 class TestAutoRememberExtractText:
